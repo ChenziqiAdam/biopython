@@ -577,3 +577,186 @@ def check_rna_dna_mass_ordering(original_seq, seq_type, double_stranded, circula
     dna_equiv = original_seq.replace("U", "T")
     dna_weight = molecular_weight(dna_equiv, "DNA", monoisotopic=monoisotopic)
     trigger_if(weight <= dna_weight, "BP-SEQ-042")
+
+
+# ======================================================================
+# Bio.PDB geometry
+# ======================================================================
+
+def _rigid_transform(points, seed=0):
+    """Apply a fixed rotation + translation to a list of 3-tuples/arrays."""
+    import numpy as np
+
+    theta = 0.9
+    axis = np.array([1.0, 2.0, 3.0])
+    axis = axis / np.linalg.norm(axis)
+    x, y, z = axis
+    c, s = np.cos(theta), np.sin(theta)
+    rot = np.array([
+        [c + x * x * (1 - c), x * y * (1 - c) - z * s, x * z * (1 - c) + y * s],
+        [y * x * (1 - c) + z * s, c + y * y * (1 - c), y * z * (1 - c) - x * s],
+        [z * x * (1 - c) - y * s, z * y * (1 - c) + x * s, c + z * z * (1 - c)],
+    ])
+    shift = np.array([7.0, -3.0, 11.0])
+    return [rot @ np.asarray(p, dtype=float) + shift for p in points]
+
+
+@_guard("pdb_calc_angle")
+def check_calc_angle(v1, v2, v3, angle):
+    """BP-PDB-001 range; BP-PDB-002 endpoint symmetry; BP-PDB-003 rigid
+    invariance."""
+    import math as _m
+
+    from Bio.PDB.vectors import calc_angle, Vector
+
+    trigger_if(not _m.isfinite(angle) or not (0.0 <= angle <= _m.pi + 1e-9),
+               "BP-PDB-001")
+    trigger_if(not _isclose(angle, calc_angle(v3, v2, v1)), "BP-PDB-002")
+
+    p1, p2, p3 = _rigid_transform(
+        [v1.get_array(), v2.get_array(), v3.get_array()]
+    )
+    moved = calc_angle(Vector(p1), Vector(p2), Vector(p3))
+    trigger_if(not _isclose(angle, moved, tol=1e-7), "BP-PDB-003")
+
+
+@_guard("pdb_calc_dihedral")
+def check_calc_dihedral(v1, v2, v3, v4, angle):
+    """BP-PDB-004 range; BP-PDB-005 full-path-reversal invariance; BP-PDB-006
+    rigid invariance; BP-PDB-007 chirality (mirror negates)."""
+    import math as _m
+
+    from Bio.PDB.vectors import calc_dihedral, Vector
+
+    trigger_if(
+        not _m.isfinite(angle) or not (-_m.pi - 1e-9 <= angle <= _m.pi + 1e-9),
+        "BP-PDB-004",
+    )
+    # Reversing the whole path (a,b,c,d) -> (d,c,b,a) preserves the rotation
+    # sense about the central bond, so the signed dihedral is unchanged.
+    trigger_if(not _isclose(angle, calc_dihedral(v4, v3, v2, v1), tol=1e-7)
+               and not _isclose(abs(angle), _m.pi, tol=1e-7),
+               "BP-PDB-005")
+
+    p = _rigid_transform(
+        [v1.get_array(), v2.get_array(), v3.get_array(), v4.get_array()]
+    )
+    moved = calc_dihedral(Vector(p[0]), Vector(p[1]), Vector(p[2]), Vector(p[3]))
+    trigger_if(not _isclose(angle, moved, tol=1e-7), "BP-PDB-006")
+
+    def mirror(v):
+        a = v.get_array().copy()
+        a[2] = -a[2]
+        return Vector(a)
+
+    mirrored = calc_dihedral(mirror(v1), mirror(v2), mirror(v3), mirror(v4))
+    trigger_if(not _isclose(angle, -mirrored, tol=1e-7)
+               and not _isclose(abs(angle), _m.pi, tol=1e-7),
+               "BP-PDB-007")
+
+
+@_guard("pdb_vector_angle")
+def check_vector_angle(self_vec, other_vec, angle):
+    """BP-PDB-008: Vector.angle is in [0, pi] and symmetric."""
+    import math as _m
+
+    trigger_if(not _m.isfinite(angle) or not (0.0 <= angle <= _m.pi + 1e-9),
+               "BP-PDB-008")
+    trigger_if(not _isclose(angle, other_vec.angle(self_vec)), "BP-PDB-008")
+
+
+@_guard("pdb_cross_product")
+def check_cross_product(left, right, result):
+    """BP-PDB-009: the cross product is orthogonal to both operands and
+    anti-commutes."""
+    la, ra, xa = left.get_array(), right.get_array(), result.get_array()
+    import numpy as np
+
+    scale = (np.linalg.norm(la) * np.linalg.norm(ra)) or 1.0
+    trigger_if(abs(float(np.dot(xa, la))) / scale > 1e-9, "BP-PDB-009")
+    trigger_if(abs(float(np.dot(xa, ra))) / scale > 1e-9, "BP-PDB-009")
+    reverse = (right ** left).get_array()
+    trigger_if(not np.allclose(xa, -reverse, atol=1e-9), "BP-PDB-009")
+
+
+@_guard("pdb_normalize")
+def check_normalize(original_array, normalized_vec):
+    """BP-PDB-010: normalizing a non-zero vector gives unit norm and preserves
+    direction."""
+    import numpy as np
+
+    orig = np.asarray(original_array, dtype=float)
+    if np.linalg.norm(orig) < 1e-12:
+        return
+    unit = normalized_vec.get_array()
+    trigger_if(not _isclose(float(np.linalg.norm(unit)), 1.0, tol=1e-9),
+               "BP-PDB-010")
+    cross = np.cross(orig, unit)
+    trigger_if(float(np.linalg.norm(cross)) / float(np.linalg.norm(orig)) > 1e-9,
+               "BP-PDB-010")
+
+
+@_guard("pdb_rotmat")
+def check_rotmat(p, q, matrix):
+    """BP-PDB-011 orthogonality (det +1); BP-PDB-012 maps p onto q."""
+    import numpy as np
+
+    trigger_if(not np.allclose(matrix @ matrix.T, np.eye(3), atol=1e-9),
+               "BP-PDB-011")
+    trigger_if(not _isclose(float(np.linalg.det(matrix)), 1.0, tol=1e-9),
+               "BP-PDB-011")
+
+    pr = p.left_multiply(matrix).get_array()
+    trigger_if(not _isclose(float(np.linalg.norm(pr)),
+                            float(np.linalg.norm(p.get_array())), tol=1e-7),
+               "BP-PDB-012")
+    qa = q.get_array()
+    if np.linalg.norm(pr) > 1e-9 and np.linalg.norm(qa) > 1e-9:
+        cos = float(np.dot(pr, qa) / (np.linalg.norm(pr) * np.linalg.norm(qa)))
+        trigger_if(cos < 1.0 - 1e-7, "BP-PDB-012")
+
+
+@_guard("pdb_rotaxis")
+def check_rotaxis(theta, axis_vec, matrix):
+    """BP-PDB-013: an axis-angle rotation matrix is orthogonal with det +1 and
+    rotaxis(theta) @ rotaxis(-theta) == I."""
+    import numpy as np
+
+    from Bio.PDB.vectors import rotaxis2m
+
+    trigger_if(not np.allclose(matrix @ matrix.T, np.eye(3), atol=1e-9),
+               "BP-PDB-013")
+    trigger_if(not _isclose(float(np.linalg.det(matrix)), 1.0, tol=1e-9),
+               "BP-PDB-013")
+    inverse = rotaxis2m(-theta, axis_vec)
+    trigger_if(not np.allclose(matrix @ inverse, np.eye(3), atol=1e-9),
+               "BP-PDB-013")
+
+
+@_guard("pdb_qcp")
+def check_qcp(reference_coords, coords, rms, init_rms):
+    """BP-PDB-014 nonnegative and bounded by init RMSD; BP-PDB-015 rigid
+    invariance and symmetry."""
+    import numpy as np
+
+    from Bio.PDB.qcprot import QCPSuperimposer
+
+    trigger_if(not np.isfinite(rms) or rms < -1e-9, "BP-PDB-014")
+    if init_rms is not None:
+        trigger_if(rms > init_rms + 1e-7, "BP-PDB-014")
+
+    ref = np.asarray(reference_coords, dtype=float)
+    mov = np.asarray(coords, dtype=float)
+    if ref.shape != mov.shape or ref.shape[0] < 3:
+        return
+
+    moved = np.asarray(_rigid_transform(list(mov)))
+    sup = QCPSuperimposer()
+    sup.set(ref, moved)
+    sup.run()
+    trigger_if(not _isclose(sup.get_rms(), rms, tol=1e-6), "BP-PDB-015")
+
+    swapped = QCPSuperimposer()
+    swapped.set(mov, ref)
+    swapped.run()
+    trigger_if(not _isclose(swapped.get_rms(), rms, tol=1e-6), "BP-PDB-015")

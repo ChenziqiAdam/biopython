@@ -12,6 +12,8 @@ from typing import Optional
 
 import numpy as np  # type: ignore
 
+from Bio import _scientific_checkers
+
 
 def m2rotaxis(m):
     """Return angles, axis pair that corresponds to rotation matrix m.
@@ -123,11 +125,11 @@ def rotaxis2m(theta, vector):
     <Vector 1.00, -2.00, -3.00>
 
     """
-    vector = vector.normalized()
+    axis = vector.normalized()
     c = np.cos(theta)
     s = np.sin(theta)
     t = 1 - c
-    x, y, z = vector.get_array()
+    x, y, z = axis.get_array()
     rot = np.zeros((3, 3))
     # 1st row
     rot[0, 0] = t * x * x + c
@@ -141,6 +143,8 @@ def rotaxis2m(theta, vector):
     rot[2, 0] = t * x * z - s * y
     rot[2, 1] = t * y * z + s * x
     rot[2, 2] = t * z * z + c
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_rotaxis(theta, vector, rot)
     return rot
 
 
@@ -203,6 +207,8 @@ def rotmat(p, q):
 
     """
     rot = np.dot(refmat(q, -p), refmat(p, -p))
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_rotmat(p, q, rot)
     return rot
 
 
@@ -218,9 +224,12 @@ def calc_angle(v1, v2, v3):
     :return: angle
     :rtype: float
     """
-    v1 = v1 - v2
-    v3 = v3 - v2
-    return v1.angle(v3)
+    d1 = v1 - v2
+    d3 = v3 - v2
+    angle = d1.angle(d3)
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_calc_angle(v1, v2, v3, angle)
+    return angle
 
 
 def calc_dihedral(v1, v2, v3, v4):
@@ -247,6 +256,8 @@ def calc_dihedral(v1, v2, v3, v4):
     except ZeroDivisionError:
         # dihedral=pi
         pass
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_calc_dihedral(v1, v2, v3, v4, angle)
     return angle
 
 
@@ -307,7 +318,10 @@ class Vector:
             c1 = np.linalg.det(np.array(((b, c), (e, f))))
             c2 = -np.linalg.det(np.array(((a, c), (d, f))))
             c3 = np.linalg.det(np.array(((a, b), (d, e))))
-            return Vector(c1, c2, c3)
+            result = Vector(c1, c2, c3)
+            if _scientific_checkers.enabled():
+                _scientific_checkers.check_cross_product(self, other, result)
+            return result
         else:
             a = self._ar * np.array(other)
             return Vector(a)
@@ -339,8 +353,11 @@ class Vector:
         If you need to chain function calls or create a new object
         use the ``normalized`` method.
         """
+        original = np.array(self._ar)
         if self.norm():
             self._ar = self._ar / self.norm()
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_normalize(original, self)
 
     def normalized(self):
         """Return a normalized copy of the Vector.
@@ -359,7 +376,10 @@ class Vector:
         # Take care of roundoff errors
         c = min(c, 1)
         c = max(-1, c)
-        return np.arccos(c)
+        angle = np.arccos(c)
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_vector_angle(self, other, angle)
+        return angle
 
     def get_array(self):
         """Return (a copy of) the array of coordinates."""
