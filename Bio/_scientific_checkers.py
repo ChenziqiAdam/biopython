@@ -95,11 +95,30 @@ def check_flexibility(sequence, scores):
 
 # --- ProtParam.protein_scale -------------------------------------------------
 
-@_guard("protein_scale_input")
-def check_protein_scale_input(sequence, param_dict, window, edge):
-    """BP-SEQ-003: a one-residue scale window must return each residue's value."""
-    complete = bool(sequence) and all(r in param_dict for r in sequence)
-    trigger_if(complete and 0 <= edge <= 1 and window == 1, "BP-SEQ-003")
+@_guard("protein_scale_window_one")
+def check_protein_scale_window_one(sequence, param_dict):
+    """BP-SEQ-003: a one-residue scale window must return each residue's raw
+    scale value.
+
+    Observed after the fact: the checker independently re-calls protein_scale
+    with window=1 and edge=1 and compares the profile to [param_dict[r] for r
+    in sequence]. A raised exception or a mismatch is the alarm; simply being
+    called with window=1 is not.
+    """
+    if not sequence or not all(r in param_dict for r in sequence):
+        return
+    from Bio.SeqUtils.ProtParam import ProteinAnalysis
+
+    expected = [param_dict[r] for r in sequence]
+    try:
+        profile = ProteinAnalysis(sequence).protein_scale(param_dict, 1, edge=1)
+    except Exception:
+        trigger("BP-SEQ-003")
+        return
+    differs = len(profile) != len(expected) or any(
+        not _isclose(a, b) for a, b in zip(profile, expected)
+    )
+    trigger_if(differs, "BP-SEQ-003")
 
 
 @_guard("protein_scale_output")

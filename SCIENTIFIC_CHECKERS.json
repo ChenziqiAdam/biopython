@@ -22,10 +22,10 @@
       "symbol": "ProteinAnalysis.flexibility",
       "scientific_quantity": "residue flexibility profile",
       "precondition": "a valid standard protein sequence of length >= 10",
-      "invariant": "a symmetrically weighted local profile is equivariant under sequence reversal: flexibility(reverse(s))[::-1] == flexibility(s)",
+      "invariant": "the local profile is equivariant under sequence reversal: flexibility(reverse(s))[::-1] == flexibility(s)",
       "observation_point": "after the flexibility loop; the checker re-calls flexibility() on the reversed sequence",
       "alarm": "the reversed-input profile, reversed back, differs beyond 1e-9",
-      "rationale": "a position-symmetric weight kernel must not privilege sequence direction"
+      "rationale": "the weight list is built to be applied symmetrically about the window centre, so the profile should not depend on which end of the sequence is read first"
     },
     {
       "id": "BP-SEQ-003",
@@ -33,11 +33,11 @@
       "source": "Bio/SeqUtils/ProtParam.py",
       "symbol": "ProteinAnalysis.protein_scale",
       "scientific_quantity": "amino-acid scale profile",
-      "precondition": "a valid protein sequence, a complete amino-acid scale dict, window == 1, 0 <= edge <= 1",
-      "invariant": "a one-residue window returns each residue's raw scale value",
-      "observation_point": "on entry to protein_scale, before weight generation",
-      "alarm": "window == 1 with a complete scale and standard edge (the current weight formula divides by window - 1)",
-      "rationale": "the smallest valid window is a defined, useful query and must not be a divide-by-zero"
+      "precondition": "a valid protein sequence of residues present in a complete amino-acid scale dict",
+      "invariant": "protein_scale(scale, window=1, edge=1) returns exactly [scale[r] for r in sequence]",
+      "observation_point": "the checker independently re-calls protein_scale with window=1, edge=1 and compares the profile to the per-residue scale values",
+      "alarm": "the window=1 call raises, or its profile differs from the residue scale values beyond 1e-9",
+      "rationale": "the smallest valid window is a defined query whose answer is the scale itself; the current weight formula divides by window - 1 and cannot produce it"
     },
     {
       "id": "BP-SEQ-004",
@@ -45,11 +45,11 @@
       "source": "Bio/SeqUtils/ProtParam.py",
       "symbol": "ProteinAnalysis.protein_scale",
       "scientific_quantity": "amino-acid scale profile",
-      "precondition": "a valid standard protein sequence, a complete scale dict, an even positive window, 0 <= edge <= 1",
-      "invariant": "a position-symmetric scale profile is equivariant under sequence reversal",
+      "precondition": "a valid standard protein sequence whose residues are all in the scale dict, an even positive window, 0 <= edge <= 1",
+      "invariant": "the scale profile is equivariant under sequence reversal: protein_scale(reverse(s))[::-1] == protein_scale(s)",
       "observation_point": "after the scale loop; the checker re-calls protein_scale() on the reversed sequence",
       "alarm": "the reversed-input profile, reversed back, differs beyond 1e-9",
-      "rationale": "the middle-residue index used by the loop is asymmetric for even windows"
+      "rationale": "the window weights are meant to be applied symmetrically, but the middle-residue index the loop uses is off-centre for even windows"
     },
     {
       "id": "BP-SEQ-005",

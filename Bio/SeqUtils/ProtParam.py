@@ -261,8 +261,8 @@ class ProteinAnalysis:
         http://www.expasy.org/cgi-bin/protscale.pl
         """
         if _scientific_checkers.enabled():
-            _scientific_checkers.check_protein_scale_input(
-                self.sequence, param_dict, window, edge
+            _scientific_checkers.check_protein_scale_window_one(
+                self.sequence, param_dict
             )
 
         # generate the weights
