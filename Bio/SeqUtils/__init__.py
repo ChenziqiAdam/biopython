@@ -17,6 +17,7 @@ from math import log
 from math import pi
 from math import sin
 
+from Bio import _scientific_checkers
 from Bio.Data import IUPACData
 from Bio.Data.CodonTable import standard_dna_table
 from Bio.Seq import complement
@@ -141,10 +142,10 @@ def gc_fraction(seq, ambiguous="remove"):
             (seq.count(x) + seq.count(x.lower())) * _gc_values[x] for x in "BDHKMNRVXY"
         )
 
-    if length == 0:
-        return 0
-
-    return gc / length
+    value = 0 if length == 0 else gc / length
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_gc_fraction(seq, value)
+    return value
 
 
 def GC123(seq):
@@ -186,6 +187,8 @@ def GC123(seq):
         nall = nall + n
 
     gcall = 100.0 * gcall / nall
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_gc123(seq, gcall, gc[0], gc[1], gc[2])
     return gcall, gc[0], gc[1], gc[2]
 
 
@@ -298,6 +301,8 @@ def nt_search(seq, subseq):
             break
         pos += int(m.start(0))
         result.append(pos)
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_nt_search(seq, subseq, result[1:])
     return result
 
 
@@ -409,7 +414,10 @@ def seq1(seq, custom_map=None, undef_code="X"):
     # add the given termination codon code and custom maps
     onecode.update((k.upper(), v) for k, v in custom_map.items())
     seqlist = [seq[3 * i : 3 * (i + 1)] for i in range(len(seq) // 3)]
-    return "".join(onecode.get(aa.upper(), undef_code) for aa in seqlist)
+    one_letter = "".join(onecode.get(aa.upper(), undef_code) for aa in seqlist)
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_seq1_roundtrip(one_letter, seq)
+    return one_letter
 
 
 ######################################
@@ -453,6 +461,7 @@ def molecular_weight(
     except AttributeError:  # not a  SeqRecord object
         pass
     seq = "".join(str(seq).split()).upper()  # Do the minimum formatting
+    original_seq = seq
 
     if seq_type == "DNA":
         if monoisotopic:
@@ -497,6 +506,10 @@ def molecular_weight(
         if circular:
             weight -= water
 
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_molecular_weight(
+            original_seq, seq_type, double_stranded, circular, monoisotopic, weight
+        )
     return weight
 
 
@@ -662,6 +675,8 @@ class CodonAdaptationIndex(dict):
             else:
                 cai_length += 1
 
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_cai_degenerate(sequence, cai_length)
         return exp(cai_value / cai_length)
 
     def optimize(self, sequence, seq_type="DNA", strict=True):
@@ -716,7 +731,12 @@ class CodonAdaptationIndex(dict):
             optimized = "".join(pref_codons[aa] for aa in aa_seq)
         except KeyError as ex:
             raise KeyError(f"Unrecognized amino acid: {ex}") from None
-        return Seq(optimized)
+        optimized = Seq(optimized)
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_codon_optimization(
+                self, seq, seq_type, optimized
+            )
+        return optimized
 
     def __str__(self):
         lines = []

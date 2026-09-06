@@ -154,6 +154,7 @@ by '1':
 import math
 import warnings
 
+from Bio import _scientific_checkers
 from Bio import BiopythonWarning
 from Bio import Seq
 from Bio import SeqUtils
@@ -686,6 +687,8 @@ def Tm_Wallace(seq, check=True, strict=True):
         )
     else:
         melting_temp += tmp
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_wallace(seq, melting_temp)
     return melting_temp
 
 
@@ -812,6 +815,8 @@ def Tm_GC(
         )
     if mismatch:
         melting_temp -= D * (seq.count("X") * 100.0 / len(seq))
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_tm_gc_monotonicity(seq, melting_temp)
     return melting_temp
 
 
@@ -925,6 +930,8 @@ def Tm_NN(
         de_table = DNA_DE1
 
     seq = str(seq)
+    _sci_original_seq = seq
+    _sci_user_c_seq = c_seq
     if not c_seq:
         # c_seq must be provided by user if dangling ends or mismatches should
         # be taken into account. Otherwise take perfect complement.
@@ -1067,6 +1074,10 @@ def Tm_NN(
         # Tm = 1/(1/Tm + corr)
         melting_temp = 1 / (1 / (melting_temp + 273.15) + corr) - 273.15
 
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_tm_nn_selfcomp(
+            _sci_original_seq, selfcomp, _sci_user_c_seq, melting_temp
+        )
     return melting_temp
 
 

@@ -52,6 +52,7 @@ Other public methods are:
 import functools
 import sys
 
+from Bio import _scientific_checkers
 from Bio.Data import IUPACData
 from Bio.Seq import Seq
 from Bio.SeqUtils import IsoelectricPoint  # Local
@@ -131,6 +132,8 @@ class ProteinAnalysis:
 
         aromaticity = sum(aa_percentages[aa] / 100 for aa in aromatic_aas)
 
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_aromaticity(aromaticity)
         return aromaticity
 
     def instability_index(self):
@@ -151,7 +154,10 @@ class ProteinAnalysis:
             dipeptide_value = index[this][next]
             score += dipeptide_value
 
-        return (10.0 / self.length) * score
+        instability = (10.0 / self.length) * score
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_instability(self.sequence, instability)
+        return instability
 
     def flexibility(self):
         """Calculate the flexibility according to Vihinen, 1994.
@@ -179,6 +185,8 @@ class ProteinAnalysis:
 
             scores.append(score / 5.25)
 
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_flexibility(self.sequence, scores)
         return scores
 
     def gravy(self, scale="KyteDoolitle"):
@@ -252,6 +260,11 @@ class ProteinAnalysis:
         Similar to expasy's ProtScale:
         http://www.expasy.org/cgi-bin/protscale.pl
         """
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_protein_scale_input(
+                self.sequence, param_dict, window, edge
+            )
+
         # generate the weights
         #   _weight_list returns only one tail. If the list should be
         #   [0.4,0.7,1.0,0.7,0.4] what you actually get from _weights_list
@@ -290,6 +303,10 @@ class ProteinAnalysis:
 
             scores.append(score / sum_of_weights)
 
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_protein_scale_output(
+                self.sequence, param_dict, window, edge, scores
+            )
         return scores
 
     def isoelectric_point(self):
@@ -300,7 +317,13 @@ class ProteinAnalysis:
         aa_content = self.count_amino_acids()
 
         ie_point = IsoelectricPoint.IsoelectricPoint(self.sequence, aa_content)
-        return ie_point.pi()
+        point = ie_point.pi()
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_pi(
+                self.sequence, point, ie_point.charge_at_pH(point)
+            )
+            _scientific_checkers.check_charge_monotonicity(self.sequence)
+        return point
 
     def charge_at_pH(self, pH):
         """Calculate the charge of a protein at given pH."""
@@ -330,6 +353,8 @@ class ProteinAnalysis:
         turn = sum(aa_percentages[r] / 100 for r in "NPGSD")
         sheet = sum(aa_percentages[r] / 100 for r in "VIYFWLT")
 
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_secondary_structure((helix, turn, sheet))
         return helix, turn, sheet
 
     def molar_extinction_coefficient(self):
