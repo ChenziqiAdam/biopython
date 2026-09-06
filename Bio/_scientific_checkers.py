@@ -410,3 +410,170 @@ def check_codon_optimization(index, source_seq, seq_type, optimized):
         trigger("BP-SEQ-012")
         return
     trigger_if(not math.isfinite(cai) or not _isclose(cai, 1.0), "BP-SEQ-012")
+
+
+# --- MeltingTemp: Tm_NN, salt_correction, chem_correction ----------------
+
+@_guard("tm_nn_revcomp")
+def check_tm_nn_revcomp(original_seq, c_seq, shift, selfcomp, nn_table, saltcorr,
+                        Na, K, Tris, Mg, dNTPs, temperature):
+    """BP-SEQ-028: Tm_NN of a perfect DNA/DNA duplex is invariant under reverse
+    complementation of the primer (all other parameters held fixed)."""
+    if c_seq is not None or shift or selfcomp or nn_table is not None:
+        return
+    from Bio.Seq import Seq
+    from Bio.SeqUtils.MeltingTemp import Tm_NN
+
+    text = str(original_seq).upper().replace("U", "T")
+    if len(text) < 2 or set(text) - set("ACGT"):
+        return
+    rc = str(Seq(text).reverse_complement())
+    rc_temp = Tm_NN(rc, saltcorr=saltcorr, Na=Na, K=K, Tris=Tris, Mg=Mg,
+                    dNTPs=dNTPs)
+    trigger_if(not _isclose(rc_temp, temperature, tol=1e-6), "BP-SEQ-028")
+
+
+@_guard("tm_nn_salt")
+def check_tm_nn_salt(original_seq, c_seq, shift, selfcomp, saltcorr, Na, K, Tris,
+                     Mg, dNTPs, temperature):
+    """BP-SEQ-029: raising [Na+] does not lower Tm_NN (salt stabilises a duplex,
+    salt-correction methods 1-4)."""
+    if (c_seq is not None or shift or selfcomp or saltcorr not in (1, 2, 3, 4)
+            or K or Tris or Mg or dNTPs):
+        return
+    from Bio.SeqUtils.MeltingTemp import Tm_NN
+
+    text = str(original_seq).upper().replace("U", "T")
+    if len(text) < 2 or set(text) - set("ACGT") or Na <= 0:
+        return
+    lower = Tm_NN(text, saltcorr=saltcorr, Na=Na / 2.0)
+    higher = Tm_NN(text, saltcorr=saltcorr, Na=Na * 2.0)
+    trigger_if(lower - temperature > 1e-6 or temperature - higher > 1e-6,
+               "BP-SEQ-029")
+    trigger_if(lower - higher > 1e-6, "BP-SEQ-029")
+
+
+@_guard("salt_correction_monotonicity")
+def check_salt_correction(Na, K, Tris, Mg, dNTPs, method, seq, corr):
+    """BP-SEQ-030: for methods 1, 3, 4 the salt-correction term is
+    k * log10([Na+] in M): monotonically increasing in [Na+] and exactly 0 at
+    [Na+] = 1 M."""
+    if method not in (1, 3, 4) or K or Tris or Mg or dNTPs or Na <= 0:
+        return
+    from Bio.SeqUtils.MeltingTemp import salt_correction
+
+    lower = salt_correction(Na=Na / 2.0, method=method, seq=seq)
+    higher = salt_correction(Na=Na * 2.0, method=method, seq=seq)
+    trigger_if(not (lower <= corr <= higher), "BP-SEQ-030")
+    at_one_molar = salt_correction(Na=1000.0, method=method, seq=seq)
+    trigger_if(abs(at_one_molar) > 1e-9, "BP-SEQ-030")
+
+
+@_guard("chem_correction_identity")
+def check_chem_correction(melting_temp, DMSO, fmd, result):
+    """BP-SEQ-031: with no additive the Tm is unchanged; adding DMSO strictly
+    lowers it."""
+    if DMSO == 0 and fmd == 0:
+        trigger_if(not _isclose(result, melting_temp), "BP-SEQ-031")
+    if DMSO > 0 and fmd == 0:
+        trigger_if(result >= melting_temp, "BP-SEQ-031")
+
+
+# --- SeqUtils.GC_skew --------------------------------------------------
+
+@_guard("gc_skew")
+def check_gc_skew(seq, window, values):
+    """BP-SEQ-032 bounds; BP-SEQ-033 complement antisymmetry."""
+    trigger_if(any(not math.isfinite(v) or not -1.0 <= v <= 1.0 for v in values),
+               "BP-SEQ-032")
+
+    from Bio.Seq import Seq
+    from Bio.SeqUtils import GC_skew
+
+    text = str(seq).upper().replace("U", "T")
+    if not text or set(text) - set("ACGT"):
+        return
+    complement = str(Seq(text).complement())
+    other = GC_skew(complement, window)
+    differs = len(values) != len(other) or any(
+        not _isclose(a, -b) for a, b in zip(values, other)
+    )
+    trigger_if(differs, "BP-SEQ-033")
+
+
+# --- ProtParam: gravy, protein molecular_weight, composition -------------
+
+@_guard("gravy")
+def check_gravy(sequence, scale, value):
+    """BP-SEQ-034 permutation invariance; BP-SEQ-035 homopolymer identity."""
+    from Bio.SeqUtils.ProtParam import ProteinAnalysis
+
+    if not sequence:
+        return
+    reversed_value = ProteinAnalysis(sequence[::-1]).gravy(scale)
+    trigger_if(not _isclose(value, reversed_value), "BP-SEQ-034")
+
+    if len(set(sequence)) == 1:
+        from Bio.SeqUtils import ProtParamData
+
+        table = ProtParamData.gravy_scales.get(scale)
+        if table is not None and sequence[0] in table:
+            trigger_if(not _isclose(value, table[sequence[0]]), "BP-SEQ-035")
+
+
+@_guard("protein_molecular_weight")
+def check_protein_molecular_weight(sequence, weight):
+    """BP-SEQ-036: a protein's average mass is invariant under residue
+    permutation (it is a composition sum minus condensation water)."""
+    from Bio.SeqUtils.ProtParam import ProteinAnalysis
+
+    if len(sequence) < 2:
+        return
+    reversed_weight = ProteinAnalysis(sequence[::-1]).molecular_weight()
+    trigger_if(not _isclose(weight, reversed_weight, tol=1e-6), "BP-SEQ-036")
+
+
+@_guard("aa_composition")
+def check_aa_composition(sequence, percentages):
+    """BP-SEQ-037: for a sequence of only standard amino acids the composition
+    percentages sum to 100."""
+    from Bio.Data import IUPACData
+
+    if not sequence or set(sequence) - set(IUPACData.protein_letters):
+        return
+    trigger_if(not _isclose(sum(percentages.values()), 100.0, tol=1e-6),
+               "BP-SEQ-037")
+
+
+@_guard("instability_homopolymer")
+def check_instability_homopolymer(sequence, value):
+    """BP-SEQ-038: for a homopolymer of length L the instability index is
+    10 * (L - 1) / L * DIWV[a][a], approaching a constant as L grows."""
+    if len(sequence) < 2 or len(set(sequence)) != 1:
+        return
+    from Bio.SeqUtils import ProtParamData
+
+    a = sequence[0]
+    try:
+        expected = (10.0 / len(sequence)) * (len(sequence) - 1) * ProtParamData.DIWV[a][a]
+    except KeyError:
+        return
+    trigger_if(not _isclose(value, expected, tol=1e-6), "BP-SEQ-038")
+
+
+# --- SeqUtils.molecular_weight: RNA vs DNA ------------------------------
+
+@_guard("rna_dna_mass_ordering")
+def check_rna_dna_mass_ordering(original_seq, seq_type, double_stranded, circular,
+                                monoisotopic, weight):
+    """BP-SEQ-042: for the same base string, single-stranded RNA is heavier
+    than single-stranded DNA (an extra 2'-OH per nucleotide)."""
+    if seq_type != "RNA" or double_stranded or circular:
+        return
+    if not original_seq or set(original_seq) - set("ACGU"):
+        return
+    from Bio.SeqUtils import molecular_weight
+
+    dna_equiv = original_seq.replace("U", "T")
+    dna_weight = molecular_weight(dna_equiv, "DNA", monoisotopic=monoisotopic)
+    trigger_if(weight <= dna_weight, "BP-SEQ-042")

@@ -213,6 +213,8 @@ def GC_skew(seq, window=100):
         except ZeroDivisionError:
             skew = 0.0
         values.append(skew)
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_gc_skew(seq, window, values)
     return values
 
 
@@ -508,6 +510,9 @@ def molecular_weight(
 
     if _scientific_checkers.enabled():
         _scientific_checkers.check_molecular_weight(
+            original_seq, seq_type, double_stranded, circular, monoisotopic, weight
+        )
+        _scientific_checkers.check_rna_dna_mass_ordering(
             original_seq, seq_type, double_stranded, circular, monoisotopic, weight
         )
     return weight

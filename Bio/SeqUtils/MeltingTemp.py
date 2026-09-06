@@ -587,6 +587,10 @@ def salt_correction(Na=0, K=0, Tris=0, Mg=0, dNTPs=0, method=1, seq=None):
     # fmt: on
     if method > 7:
         raise ValueError("Allowed values for parameter 'method' are 1-7.")
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_salt_correction(
+            Na, K, Tris, Mg, dNTPs, method, seq, corr
+        )
     return corr
 
 
@@ -628,6 +632,7 @@ def chem_correction(
         66.68
 
     """
+    _sci_input_temp = melting_temp
     if DMSO:
         melting_temp -= DMSOfactor * DMSO
     if fmd:
@@ -643,6 +648,10 @@ def chem_correction(
             melting_temp += (0.453 * (GC / 100.0) - 2.88) * fmd
         if fmdmethod not in (1, 2):
             raise ValueError("'fmdmethod' must be 1 or 2")
+    if _scientific_checkers.enabled():
+        _scientific_checkers.check_chem_correction(
+            _sci_input_temp, DMSO, fmd, melting_temp
+        )
     return melting_temp
 
 
@@ -919,6 +928,7 @@ def Tm_NN(
      - saltcorr: See method 'Tm_GC'. Default=5. 0 means no salt correction.
 
     """
+    _sci_user_nn_table = nn_table
     # Set defaults
     if not nn_table:
         nn_table = DNA_NN3
@@ -1077,6 +1087,14 @@ def Tm_NN(
     if _scientific_checkers.enabled():
         _scientific_checkers.check_tm_nn_selfcomp(
             _sci_original_seq, selfcomp, _sci_user_c_seq, melting_temp
+        )
+        _scientific_checkers.check_tm_nn_revcomp(
+            _sci_original_seq, _sci_user_c_seq, shift, selfcomp,
+            _sci_user_nn_table, saltcorr, Na, K, Tris, Mg, dNTPs, melting_temp,
+        )
+        _scientific_checkers.check_tm_nn_salt(
+            _sci_original_seq, _sci_user_c_seq, shift, selfcomp, saltcorr,
+            Na, K, Tris, Mg, dNTPs, melting_temp,
         )
     return melting_temp
 

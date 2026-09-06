@@ -113,13 +113,20 @@ class ProteinAnalysis:
             aa: (count * 100 / self.length) for aa, count in aa_counts.items()
         }
 
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_aa_composition(self.sequence, percentages)
         return percentages
 
     def molecular_weight(self):
         """Calculate MW from Protein sequence."""
-        return molecular_weight(
+        weight = molecular_weight(
             self.sequence, seq_type="protein", monoisotopic=self.monoisotopic
         )
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_protein_molecular_weight(
+                self.sequence, weight
+            )
+        return weight
 
     def aromaticity(self):
         """Calculate the aromaticity according to Lobry, 1994.
@@ -157,6 +164,9 @@ class ProteinAnalysis:
         instability = (10.0 / self.length) * score
         if _scientific_checkers.enabled():
             _scientific_checkers.check_instability(self.sequence, instability)
+            _scientific_checkers.check_instability_homopolymer(
+                self.sequence, instability
+            )
         return instability
 
     def flexibility(self):
@@ -208,7 +218,10 @@ class ProteinAnalysis:
 
         total_gravy = sum(selected_scale[aa] for aa in self.sequence)
 
-        return total_gravy / self.length
+        value = total_gravy / self.length
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_gravy(self.sequence, scale, value)
+        return value
 
     def _weight_list(self, window, edge):
         """Make list of relative weight of window edges (PRIVATE).
