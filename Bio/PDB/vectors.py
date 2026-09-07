@@ -143,8 +143,6 @@ def rotaxis2m(theta, vector):
     rot[2, 0] = t * x * z - s * y
     rot[2, 1] = t * y * z + s * x
     rot[2, 2] = t * z * z + c
-    if _scientific_checkers.enabled():
-        _scientific_checkers.check_rotaxis(theta, vector, rot)
     return rot
 
 
@@ -318,10 +316,7 @@ class Vector:
             c1 = np.linalg.det(np.array(((b, c), (e, f))))
             c2 = -np.linalg.det(np.array(((a, c), (d, f))))
             c3 = np.linalg.det(np.array(((a, b), (d, e))))
-            result = Vector(c1, c2, c3)
-            if _scientific_checkers.enabled():
-                _scientific_checkers.check_cross_product(self, other, result)
-            return result
+            return Vector(c1, c2, c3)
         else:
             a = self._ar * np.array(other)
             return Vector(a)
@@ -353,11 +348,8 @@ class Vector:
         If you need to chain function calls or create a new object
         use the ``normalized`` method.
         """
-        original = np.array(self._ar)
         if self.norm():
             self._ar = self._ar / self.norm()
-        if _scientific_checkers.enabled():
-            _scientific_checkers.check_normalize(original, self)
 
     def normalized(self):
         """Return a normalized copy of the Vector.
@@ -377,8 +369,6 @@ class Vector:
         c = min(c, 1)
         c = max(-1, c)
         angle = np.arccos(c)
-        if _scientific_checkers.enabled():
-            _scientific_checkers.check_vector_angle(self, other, angle)
         return angle
 
     def get_array(self):

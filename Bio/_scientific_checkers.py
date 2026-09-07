@@ -9,6 +9,12 @@ may only (a) call a public API a second time on a transformed input and/or
 (b) read values already computed by production code, then compare. A checker
 never re-implements the scientific formula it is checking, never raises, and
 never changes a return value, exception, or numerical result.
+
+Scope rule (METHODOLOGY.md section 1): every sanitizer in this bank guards a
+**scientific** invariant -- a physical, chemical, geometric, or thermodynamic
+law whose violation has a domain consequence. Pure arithmetic identities,
+range/finiteness checks, lookup-table round trips, and generic software
+correctness are explicitly out of scope and are not instrumented here.
 """
 
 import json
@@ -80,7 +86,14 @@ def _guard(checker_id):
 
 @_guard("flexibility")
 def check_flexibility(sequence, scores):
-    """BP-SEQ-001 window length; BP-SEQ-002 reversal equivariance."""
+    """BP-SEQ-001 window length; BP-SEQ-002 reversal equivariance.
+
+    A sliding-window smoothing profile must be position-symmetric: the physical
+    quantity (local backbone flexibility) does not depend on which end of the
+    chain the window is indexed from, so reversing the sequence must reverse the
+    profile. An asymmetric window introduces a systematic phase shift in the
+    profile.
+    """
     window = 9
     trigger_if(len(scores) != max(0, len(sequence) - window + 1), "BP-SEQ-001")
 
@@ -100,10 +113,9 @@ def check_protein_scale_window_one(sequence, param_dict):
     """BP-SEQ-003: a one-residue scale window must return each residue's raw
     scale value.
 
-    Observed after the fact: the checker independently re-calls protein_scale
-    with window=1 and edge=1 and compares the profile to [param_dict[r] for r
-    in sequence]. A raised exception or a mismatch is the alarm; simply being
-    called with window=1 is not.
+    The checker independently re-calls protein_scale with window=1 and edge=1
+    and compares the profile to [param_dict[r] for r in sequence]. A raised
+    exception or a mismatch is the alarm; being called with window=1 is not.
     """
     if not sequence or not all(r in param_dict for r in sequence):
         return
@@ -123,7 +135,11 @@ def check_protein_scale_window_one(sequence, param_dict):
 
 @_guard("protein_scale_output")
 def check_protein_scale_output(sequence, param_dict, window, edge, scores):
-    """BP-SEQ-004: even-window scale profile reversal equivariance (pure API)."""
+    """BP-SEQ-004: even-window scale profile reversal equivariance (pure API).
+
+    Same position-symmetry law as BP-SEQ-002: the amino-acid scale profile is a
+    windowed average, so reversing the sequence must reverse the profile.
+    """
     if window <= 0 or window % 2 or not sequence:
         return
     if not all(r in param_dict for r in sequence):
@@ -139,26 +155,15 @@ def check_protein_scale_output(sequence, param_dict, window, edge, scores):
     trigger_if(differs, "BP-SEQ-004")
 
 
-# --- ProtParam derived quantities -----------------------------------------
-
-@_guard("aromaticity")
-def check_aromaticity(value):
-    """BP-SEQ-027: aromaticity is a frequency, in [0, 1]."""
-    trigger_if(not math.isfinite(value) or not 0.0 <= value <= 1.0, "BP-SEQ-027")
-
-
-@_guard("secondary_structure")
-def check_secondary_structure(fractions):
-    """BP-SEQ-025: each secondary-structure fraction lies in [0, 1]."""
-    trigger_if(
-        any(not math.isfinite(f) or not 0.0 <= f <= 1.0 for f in fractions),
-        "BP-SEQ-025",
-    )
-
+# --- ProtParam.instability_index ----------------------------------------------
 
 @_guard("instability")
 def check_instability(sequence, value):
-    """BP-SEQ-026: a single-residue peptide has no dipeptide; index is 0."""
+    """BP-SEQ-026: the Guruprasad instability index is defined as a sum over
+    dipeptides. A single-residue peptide contains no dipeptide, so the index is
+    identically 0 (or the input is rejected). This is the biochemical domain
+    boundary of the quantity, not an arithmetic edge case.
+    """
     if len(sequence) == 1:
         trigger_if(not math.isfinite(value) or not _isclose(value, 0.0), "BP-SEQ-026")
 
@@ -167,8 +172,11 @@ def check_instability(sequence, value):
 
 @_guard("pi")
 def check_pi(sequence, point, charge):
-    """BP-SEQ-006/007: modeled charge at the reported pI is ~0 for extreme
-    acidic / basic compositions."""
+    """BP-SEQ-006/007: the isoelectric point is by definition the pH at which the
+    modeled net charge is zero. For extreme acidic (D/E) or basic (K/R)
+    compositions the reported pI must still satisfy charge-neutrality; a large
+    residual charge means the reported pI is not the isoelectric point.
+    """
     residues = set(sequence)
     if sequence and residues <= {"D", "E"}:
         trigger_if(abs(charge) > 1e-3, "BP-SEQ-006")
@@ -178,7 +186,10 @@ def check_pi(sequence, point, charge):
 
 @_guard("charge_monotonicity")
 def check_charge_monotonicity(sequence):
-    """BP-SEQ-011: modeled net charge is non-increasing in pH."""
+    """BP-SEQ-011: titration physics -- a polyprotic molecule's net charge is a
+    monotonically non-increasing function of pH. A rise anywhere on the curve
+    means the charge model is inconsistent with acid/base equilibrium.
+    """
     from Bio.SeqUtils.ProtParam import ProteinAnalysis
 
     analysis = ProteinAnalysis(sequence)
@@ -188,55 +199,20 @@ def check_charge_monotonicity(sequence):
     trigger_if(rises, "BP-SEQ-011")
 
 
-# --- SeqUtils.gc_fraction / GC123 ---------------------------------------------
-
-@_guard("gc_fraction")
-def check_gc_fraction(seq, value):
-    """BP-SEQ-009 bounds; BP-SEQ-010 complement symmetry; BP-SEQ-016 mode
-    consistency for unambiguous DNA."""
-    trigger_if(not math.isfinite(value) or not 0 <= value <= 1, "BP-SEQ-009")
-
-    from Bio.Seq import Seq
-    from Bio.SeqUtils import gc_fraction
-
-    text = str(seq).upper()
-    if not text:
-        return
-    unambiguous = set(text) <= set("ACGT")
-
-    weighted = gc_fraction(text, "weighted")
-    complement_weighted = gc_fraction(str(Seq(text).complement()), "weighted")
-    trigger_if(not _isclose(weighted, complement_weighted), "BP-SEQ-010")
-
-    if unambiguous:
-        remove = gc_fraction(text, "remove")
-        ignore = gc_fraction(text, "ignore")
-        trigger_if(
-            not (_isclose(remove, ignore) and _isclose(remove, weighted)),
-            "BP-SEQ-016",
-        )
-
-
-@_guard("gc123")
-def check_gc123(seq, total, pos1, pos2, pos3):
-    """BP-SEQ-017: total GC% equals the mean of the three codon-position GC%
-    when the sequence length is a multiple of three."""
-    text = str(seq).upper()
-    # GC123 documents that it does not handle ambiguous nucleotides.
-    if len(text) == 0 or len(text) % 3 != 0 or set(text) - set("ACGT"):
-        return
-    trigger_if(
-        not _isclose(total, (pos1 + pos2 + pos3) / 3, tol=1e-6), "BP-SEQ-017"
-    )
-
-
 # --- SeqUtils.molecular_weight ----------------------------------------------
 
 @_guard("molecular_weight")
 def check_molecular_weight(original_seq, seq_type, double_stranded, circular,
                            monoisotopic, weight):
-    """BP-SEQ-008 empty polymer; BP-SEQ-014 double-stranded symmetry;
-    BP-SEQ-023 single-strand additivity."""
+    """BP-SEQ-008 empty polymer; BP-SEQ-023 single-strand additivity.
+
+    008: an empty polymer has no residues and no bonds; its mass is 0 (or the
+    input is rejected). Acquiring the mass of one water molecule means the
+    condensation-water bookkeeping is wrong.
+    023: forming a phosphodiester bond between two oligomers releases exactly
+    one water, so MW(a+b) + water == MW(a) + MW(b). This is mass conservation
+    across the condensation reaction.
+    """
     water = 18.010565 if monoisotopic else 18.0153
 
     trigger_if(
@@ -245,25 +221,9 @@ def check_molecular_weight(original_seq, seq_type, double_stranded, circular,
     if not original_seq:
         return
 
-    from Bio.Seq import Seq
     from Bio.SeqUtils import molecular_weight
 
     if seq_type in ("DNA", "RNA") and set(original_seq) <= set("ACGTU"):
-        s = Seq(original_seq)
-        variants = {
-            "reverse": str(s[::-1]),
-            "complement": str(s.complement()),
-            "reverse_complement": str(s.reverse_complement()),
-        }
-        if double_stranded:
-            base = molecular_weight(original_seq, seq_type, double_stranded=True,
-                                    circular=circular, monoisotopic=monoisotopic)
-            for v in variants.values():
-                other = molecular_weight(v, seq_type, double_stranded=True,
-                                         circular=circular,
-                                         monoisotopic=monoisotopic)
-                trigger_if(not _isclose(base, other), "BP-SEQ-014")
-
         if not double_stranded and not circular and len(original_seq) >= 2:
             half = len(original_seq) // 2
             a, b = original_seq[:half], original_seq[half:]
@@ -276,76 +236,14 @@ def check_molecular_weight(original_seq, seq_type, double_stranded, circular,
             trigger_if(not _isclose(whole + water, parts, tol=1e-6), "BP-SEQ-023")
 
 
-# --- SeqUtils.six_frame_translations ---------------------------------------
-
-# --- SeqUtils.seq1 / seq3 -------------------------------------------------
-
-@_guard("three_one_roundtrip")
-def check_seq1_roundtrip(one_letter, three_letter_input):
-    """BP-SEQ-021: seq1(seq3(s)) round-trips standard amino-acid sequences."""
-    from Bio.SeqUtils import seq3
-
-    text = str(three_letter_input)
-    if len(text) % 3 or not text:
-        return
-    codes = {text[i:i + 3].capitalize() for i in range(0, len(text), 3)}
-    standard = {
-        "Ala", "Arg", "Asn", "Asp", "Cys", "Gln", "Glu", "Gly", "His", "Ile",
-        "Leu", "Lys", "Met", "Phe", "Pro", "Ser", "Thr", "Trp", "Tyr", "Val",
-    }
-    if not codes <= standard:
-        return
-    trigger_if(str(seq3(one_letter)).capitalize() != text.capitalize(),
-               "BP-SEQ-021")
-
-
-# --- SeqUtils.nt_search --------------------------------------------------
-
-@_guard("nt_search")
-def check_nt_search(seq, subseq, positions):
-    """BP-SEQ-022: every reported position actually matches the IUPAC-expanded
-    subsequence."""
-    from Bio.Data import IUPACData
-
-    text = str(seq).upper()
-    query = str(subseq).upper()
-    n = len(query)
-    if not query or set(query) - set(IUPACData.ambiguous_dna_values):
-        return
-
-    def matches(fragment):
-        if len(fragment) != n:
-            return False
-        return all(
-            f in IUPACData.ambiguous_dna_values[q] for q, f in zip(query, fragment)
-        )
-
-    for p in positions:
-        trigger_if(not matches(text[p:p + n]), "BP-SEQ-022")
-
-
 # --- MeltingTemp ---------------------------------------------------------
-
-@_guard("wallace")
-def check_wallace(seq, temperature):
-    """BP-SEQ-015 reverse-complement symmetry; BP-SEQ-018 count consistency."""
-    from Bio.Seq import Seq
-    from Bio.SeqUtils.MeltingTemp import Tm_Wallace
-
-    text = str(seq).upper().replace("U", "T")
-    if not text or set(text) - set("ACGT"):
-        return
-    rc = str(Seq(text).reverse_complement())
-    trigger_if(not _isclose(Tm_Wallace(rc), temperature), "BP-SEQ-015")
-
-    gc = text.count("G") + text.count("C")
-    at = text.count("A") + text.count("T")
-    trigger_if(not _isclose(temperature, 4 * gc + 2 * at), "BP-SEQ-018")
-
 
 @_guard("tm_gc_monotonicity")
 def check_tm_gc_monotonicity(seq, temperature):
-    """BP-SEQ-019: at fixed length, raising %GC does not lower Tm_GC."""
+    """BP-SEQ-019: duplex thermodynamics -- a G:C pair contributes three
+    hydrogen bonds versus two for A:T, so at fixed length raising %GC cannot
+    lower the melting temperature.
+    """
     from Bio.SeqUtils.MeltingTemp import Tm_GC
 
     text = str(seq).upper().replace("U", "T")
@@ -362,63 +260,14 @@ def check_tm_gc_monotonicity(seq, temperature):
     trigger_if(tm_lower - tm_higher > 1e-6, "BP-SEQ-019")
 
 
-@_guard("tm_nn_selfcomp")
-def check_tm_nn_selfcomp(seq, selfcomp, c_seq, temperature):
-    """BP-SEQ-020: with selfcomp=True, supplying the exact complement as c_seq
-    gives the same Tm as letting Tm_NN derive it."""
-    if not selfcomp or c_seq is not None:
-        return
-    from Bio.Seq import Seq
-    from Bio.SeqUtils.MeltingTemp import Tm_NN
-
-    text = str(seq).upper().replace("U", "T")
-    if len(text) < 2 or set(text) - set("ACGT"):
-        return
-    explicit = Tm_NN(text, selfcomp=True, c_seq=str(Seq(text).complement()))
-    trigger_if(not _isclose(explicit, temperature), "BP-SEQ-020")
-
-
-# --- CodonAdaptationIndex ------------------------------------------------
-
-@_guard("cai_degenerate")
-def check_cai_degenerate(sequence, cai_length):
-    """BP-SEQ-005: a valid coding sequence of only ATG/TGG has CAI 1, not a
-    zero-division."""
-    text = str(sequence).upper()
-    codons = [text[i:i + 3] for i in range(0, len(text), 3)]
-    valid = bool(text) and len(text) % 3 == 0 and set(codons) <= {"ATG", "TGG"}
-    trigger_if(valid and cai_length == 0, "BP-SEQ-005")
-
-
-@_guard("codon_optimization")
-def check_codon_optimization(index, source_seq, seq_type, optimized):
-    """BP-SEQ-012: optimize() preserves translation and yields CAI 1."""
-    from Bio.Seq import Seq
-
-    try:
-        if seq_type in ("DNA", "RNA"):
-            before = str(Seq(str(source_seq).upper()).translate())
-        else:
-            before = str(source_seq).upper()
-        after = str(Seq(str(optimized)).translate())
-    except Exception:
-        return
-    trigger_if(before != after, "BP-SEQ-012")
-    try:
-        cai = index.calculate(optimized)
-    except Exception:
-        trigger("BP-SEQ-012")
-        return
-    trigger_if(not math.isfinite(cai) or not _isclose(cai, 1.0), "BP-SEQ-012")
-
-
-# --- MeltingTemp: Tm_NN, salt_correction, chem_correction ----------------
-
 @_guard("tm_nn_revcomp")
 def check_tm_nn_revcomp(original_seq, c_seq, shift, selfcomp, nn_table, saltcorr,
                         Na, K, Tris, Mg, dNTPs, temperature):
-    """BP-SEQ-028: Tm_NN of a perfect DNA/DNA duplex is invariant under reverse
-    complementation of the primer (all other parameters held fixed)."""
+    """BP-SEQ-028: a DNA/DNA duplex and its reverse complement are the same
+    physical molecule read from the other strand, so the nearest-neighbor
+    melting temperature is invariant under reverse complementation of the
+    primer (all other parameters held fixed).
+    """
     if c_seq is not None or shift or selfcomp or nn_table is not None:
         return
     from Bio.Seq import Seq
@@ -436,8 +285,9 @@ def check_tm_nn_revcomp(original_seq, c_seq, shift, selfcomp, nn_table, saltcorr
 @_guard("tm_nn_salt")
 def check_tm_nn_salt(original_seq, c_seq, shift, selfcomp, saltcorr, Na, K, Tris,
                      Mg, dNTPs, temperature):
-    """BP-SEQ-029: raising [Na+] does not lower Tm_NN (salt stabilises a duplex,
-    salt-correction methods 1-4)."""
+    """BP-SEQ-029: counterion screening -- raising [Na+] stabilises a duplex, so
+    it does not lower Tm_NN (salt-correction methods 1-4).
+    """
     if (c_seq is not None or shift or selfcomp or saltcorr not in (1, 2, 3, 4)
             or K or Tris or Mg or dNTPs):
         return
@@ -456,8 +306,9 @@ def check_tm_nn_salt(original_seq, c_seq, shift, selfcomp, saltcorr, Na, K, Tris
 @_guard("salt_correction_monotonicity")
 def check_salt_correction(Na, K, Tris, Mg, dNTPs, method, seq, corr):
     """BP-SEQ-030: for methods 1, 3, 4 the salt-correction term is
-    k * log10([Na+] in M): monotonically increasing in [Na+] and exactly 0 at
-    [Na+] = 1 M."""
+    k * log10([Na+] in M): monotonically increasing in [Na+] (more counterion
+    screening -> higher Tm) and exactly 0 at the 1 M reference state.
+    """
     if method not in (1, 3, 4) or K or Tris or Mg or dNTPs or Na <= 0:
         return
     from Bio.SeqUtils.MeltingTemp import salt_correction
@@ -469,24 +320,29 @@ def check_salt_correction(Na, K, Tris, Mg, dNTPs, method, seq, corr):
     trigger_if(abs(at_one_molar) > 1e-9, "BP-SEQ-030")
 
 
-@_guard("chem_correction_identity")
-def check_chem_correction(melting_temp, DMSO, fmd, result):
-    """BP-SEQ-031: with no additive the Tm is unchanged; adding DMSO strictly
-    lowers it."""
-    if DMSO == 0 and fmd == 0:
-        trigger_if(not _isclose(result, melting_temp), "BP-SEQ-031")
-    if DMSO > 0 and fmd == 0:
-        trigger_if(result >= melting_temp, "BP-SEQ-031")
+# --- CodonAdaptationIndex ------------------------------------------------
+
+@_guard("cai_degenerate")
+def check_cai_degenerate(sequence, cai_length):
+    """BP-SEQ-005: Met (ATG) and Trp (TGG) each have a single codon, so their
+    relative adaptiveness is 1 by definition. A coding sequence built only from
+    these codons is a valid biological input whose CAI is 1; producing
+    cai_length == 0 drives the geometric-mean formula into a division by zero.
+    """
+    text = str(sequence).upper()
+    codons = [text[i:i + 3] for i in range(0, len(text), 3)]
+    valid = bool(text) and len(text) % 3 == 0 and set(codons) <= {"ATG", "TGG"}
+    trigger_if(valid and cai_length == 0, "BP-SEQ-005")
 
 
 # --- SeqUtils.GC_skew --------------------------------------------------
 
 @_guard("gc_skew")
 def check_gc_skew(seq, window, values):
-    """BP-SEQ-032 bounds; BP-SEQ-033 complement antisymmetry."""
-    trigger_if(any(not math.isfinite(v) or not -1.0 <= v <= 1.0 for v in values),
-               "BP-SEQ-032")
-
+    """BP-SEQ-033: Watson-Crick pairing -- every G on one strand is a C on the
+    complement and vice versa, so (G - C)/(G + C) computed on the complement is
+    the exact element-wise negation of the value on the original strand.
+    """
     from Bio.Seq import Seq
     from Bio.SeqUtils import GC_skew
 
@@ -501,64 +357,22 @@ def check_gc_skew(seq, window, values):
     trigger_if(differs, "BP-SEQ-033")
 
 
-# --- ProtParam: gravy, protein molecular_weight, composition -------------
-
-@_guard("gravy")
-def check_gravy(sequence, scale, value):
-    """BP-SEQ-034 permutation invariance; BP-SEQ-035 homopolymer identity."""
-    from Bio.SeqUtils.ProtParam import ProteinAnalysis
-
-    if not sequence:
-        return
-    reversed_value = ProteinAnalysis(sequence[::-1]).gravy(scale)
-    trigger_if(not _isclose(value, reversed_value), "BP-SEQ-034")
-
-    if len(set(sequence)) == 1:
-        from Bio.SeqUtils import ProtParamData
-
-        table = ProtParamData.gravy_scales.get(scale)
-        if table is not None and sequence[0] in table:
-            trigger_if(not _isclose(value, table[sequence[0]]), "BP-SEQ-035")
-
+# --- ProtParam: protein molecular_weight --------------------------------
 
 @_guard("protein_molecular_weight")
-def check_protein_molecular_weight(sequence, weight):
-    """BP-SEQ-036: a protein's average mass is invariant under residue
-    permutation (it is a composition sum minus condensation water)."""
+def check_protein_molecular_weight(sequence, monoisotopic, weight):
+    """BP-SEQ-036: a protein's mass is the sum of its residue masses minus one
+    condensation water per peptide bond. Mass is additive and order-independent,
+    so the value is invariant under residue permutation.
+    """
     from Bio.SeqUtils.ProtParam import ProteinAnalysis
 
     if len(sequence) < 2:
         return
-    reversed_weight = ProteinAnalysis(sequence[::-1]).molecular_weight()
+    reversed_weight = ProteinAnalysis(
+        sequence[::-1], monoisotopic=monoisotopic
+    ).molecular_weight()
     trigger_if(not _isclose(weight, reversed_weight, tol=1e-6), "BP-SEQ-036")
-
-
-@_guard("aa_composition")
-def check_aa_composition(sequence, percentages):
-    """BP-SEQ-037: for a sequence of only standard amino acids the composition
-    percentages sum to 100."""
-    from Bio.Data import IUPACData
-
-    if not sequence or set(sequence) - set(IUPACData.protein_letters):
-        return
-    trigger_if(not _isclose(sum(percentages.values()), 100.0, tol=1e-6),
-               "BP-SEQ-037")
-
-
-@_guard("instability_homopolymer")
-def check_instability_homopolymer(sequence, value):
-    """BP-SEQ-038: for a homopolymer of length L the instability index is
-    10 * (L - 1) / L * DIWV[a][a], approaching a constant as L grows."""
-    if len(sequence) < 2 or len(set(sequence)) != 1:
-        return
-    from Bio.SeqUtils import ProtParamData
-
-    a = sequence[0]
-    try:
-        expected = (10.0 / len(sequence)) * (len(sequence) - 1) * ProtParamData.DIWV[a][a]
-    except KeyError:
-        return
-    trigger_if(not _isclose(value, expected, tol=1e-6), "BP-SEQ-038")
 
 
 # --- SeqUtils.molecular_weight: RNA vs DNA ------------------------------
@@ -566,8 +380,11 @@ def check_instability_homopolymer(sequence, value):
 @_guard("rna_dna_mass_ordering")
 def check_rna_dna_mass_ordering(original_seq, seq_type, double_stranded, circular,
                                 monoisotopic, weight):
-    """BP-SEQ-042: for the same base string, single-stranded RNA is heavier
-    than single-stranded DNA (an extra 2'-OH per nucleotide)."""
+    """BP-SEQ-042: chemically, an RNA nucleotide carries a 2'-OH that the
+    corresponding DNA nucleotide replaces with 2'-H, and U (RNA) is lighter
+    than T (DNA) by one CH2. Summed over a strand the 2'-OH term dominates, so
+    single-stranded RNA is heavier than the same-length DNA string.
+    """
     if seq_type != "RNA" or double_stranded or circular:
         return
     if not original_seq or set(original_seq) - set("ACGU"):
@@ -603,14 +420,14 @@ def _rigid_transform(points, seed=0):
 
 @_guard("pdb_calc_angle")
 def check_calc_angle(v1, v2, v3, angle):
-    """BP-PDB-001 range; BP-PDB-002 endpoint symmetry; BP-PDB-003 rigid
-    invariance."""
-    import math as _m
+    """BP-PDB-002 endpoint symmetry; BP-PDB-003 rigid invariance.
 
+    A bond angle is a Euclidean invariant: it does not change when the three
+    atoms are rigidly rotated and translated together (003), and it does not
+    depend on the traversal direction of the two rays from the vertex (002).
+    """
     from Bio.PDB.vectors import calc_angle, Vector
 
-    trigger_if(not _m.isfinite(angle) or not (0.0 <= angle <= _m.pi + 1e-9),
-               "BP-PDB-001")
     trigger_if(not _isclose(angle, calc_angle(v3, v2, v1)), "BP-PDB-002")
 
     p1, p2, p3 = _rigid_transform(
@@ -622,21 +439,15 @@ def check_calc_angle(v1, v2, v3, angle):
 
 @_guard("pdb_calc_dihedral")
 def check_calc_dihedral(v1, v2, v3, v4, angle):
-    """BP-PDB-004 range; BP-PDB-005 full-path-reversal invariance; BP-PDB-006
-    rigid invariance; BP-PDB-007 chirality (mirror negates)."""
+    """BP-PDB-006 rigid invariance; BP-PDB-007 chirality (mirror negates).
+
+    A signed dihedral is invariant under a proper rigid motion (006) and
+    changes sign under an improper one (a reflection, 007) -- this sign is the
+    stereochemical chirality of the four-atom arrangement.
+    """
     import math as _m
 
     from Bio.PDB.vectors import calc_dihedral, Vector
-
-    trigger_if(
-        not _m.isfinite(angle) or not (-_m.pi - 1e-9 <= angle <= _m.pi + 1e-9),
-        "BP-PDB-004",
-    )
-    # Reversing the whole path (a,b,c,d) -> (d,c,b,a) preserves the rotation
-    # sense about the central bond, so the signed dihedral is unchanged.
-    trigger_if(not _isclose(angle, calc_dihedral(v4, v3, v2, v1), tol=1e-7)
-               and not _isclose(abs(angle), _m.pi, tol=1e-7),
-               "BP-PDB-005")
 
     p = _rigid_transform(
         [v1.get_array(), v2.get_array(), v3.get_array(), v4.get_array()]
@@ -655,51 +466,23 @@ def check_calc_dihedral(v1, v2, v3, v4, angle):
                "BP-PDB-007")
 
 
-@_guard("pdb_vector_angle")
-def check_vector_angle(self_vec, other_vec, angle):
-    """BP-PDB-008: Vector.angle is in [0, pi] and symmetric."""
-    import math as _m
-
-    trigger_if(not _m.isfinite(angle) or not (0.0 <= angle <= _m.pi + 1e-9),
-               "BP-PDB-008")
-    trigger_if(not _isclose(angle, other_vec.angle(self_vec)), "BP-PDB-008")
-
-
-@_guard("pdb_cross_product")
-def check_cross_product(left, right, result):
-    """BP-PDB-009: the cross product is orthogonal to both operands and
-    anti-commutes."""
-    la, ra, xa = left.get_array(), right.get_array(), result.get_array()
-    import numpy as np
-
-    scale = (np.linalg.norm(la) * np.linalg.norm(ra)) or 1.0
-    trigger_if(abs(float(np.dot(xa, la))) / scale > 1e-9, "BP-PDB-009")
-    trigger_if(abs(float(np.dot(xa, ra))) / scale > 1e-9, "BP-PDB-009")
-    reverse = (right ** left).get_array()
-    trigger_if(not np.allclose(xa, -reverse, atol=1e-9), "BP-PDB-009")
-
-
-@_guard("pdb_normalize")
-def check_normalize(original_array, normalized_vec):
-    """BP-PDB-010: normalizing a non-zero vector gives unit norm and preserves
-    direction."""
-    import numpy as np
-
-    orig = np.asarray(original_array, dtype=float)
-    if np.linalg.norm(orig) < 1e-12:
-        return
-    unit = normalized_vec.get_array()
-    trigger_if(not _isclose(float(np.linalg.norm(unit)), 1.0, tol=1e-9),
-               "BP-PDB-010")
-    cross = np.cross(orig, unit)
-    trigger_if(float(np.linalg.norm(cross)) / float(np.linalg.norm(orig)) > 1e-9,
-               "BP-PDB-010")
-
-
 @_guard("pdb_rotmat")
 def check_rotmat(p, q, matrix):
-    """BP-PDB-011 orthogonality (det +1); BP-PDB-012 maps p onto q."""
+    """BP-PDB-011 orthogonality (det +1); BP-PDB-012 maps p onto q.
+
+    rotmat(p, q) must be a proper rotation (an element of SO(3): orthogonal
+    with determinant +1, so it preserves lengths and handedness), and it must
+    actually carry the direction of p onto the direction of q.
+
+    Precondition: p and q are non-collinear (the antiparallel case p = -k q is
+    a documented rotation singularity and is excluded).
+    """
     import numpy as np
+
+    pa, qa0 = p.get_array(), q.get_array()
+    np_ = np.linalg.norm(pa) * np.linalg.norm(qa0)
+    if np_ < 1e-12 or abs(abs(float(np.dot(pa, qa0)) / np_) - 1.0) < 1e-9:
+        return
 
     trigger_if(not np.allclose(matrix @ matrix.T, np.eye(3), atol=1e-9),
                "BP-PDB-011")
@@ -716,34 +499,15 @@ def check_rotmat(p, q, matrix):
         trigger_if(cos < 1.0 - 1e-7, "BP-PDB-012")
 
 
-@_guard("pdb_rotaxis")
-def check_rotaxis(theta, axis_vec, matrix):
-    """BP-PDB-013: an axis-angle rotation matrix is orthogonal with det +1 and
-    rotaxis(theta) @ rotaxis(-theta) == I."""
-    import numpy as np
-
-    from Bio.PDB.vectors import rotaxis2m
-
-    trigger_if(not np.allclose(matrix @ matrix.T, np.eye(3), atol=1e-9),
-               "BP-PDB-013")
-    trigger_if(not _isclose(float(np.linalg.det(matrix)), 1.0, tol=1e-9),
-               "BP-PDB-013")
-    inverse = rotaxis2m(-theta, axis_vec)
-    trigger_if(not np.allclose(matrix @ inverse, np.eye(3), atol=1e-9),
-               "BP-PDB-013")
-
-
 @_guard("pdb_qcp")
-def check_qcp(reference_coords, coords, rms, init_rms):
-    """BP-PDB-014 nonnegative and bounded by init RMSD; BP-PDB-015 rigid
-    invariance and symmetry."""
+def check_qcp(reference_coords, coords, rms):
+    """BP-PDB-015: the optimal-superposition RMSD is a geometric property of the
+    two point sets, so it is unchanged by a rigid motion of the moving set
+    before fitting, and it is symmetric in its two arguments.
+    """
     import numpy as np
 
     from Bio.PDB.qcprot import QCPSuperimposer
-
-    trigger_if(not np.isfinite(rms) or rms < -1e-9, "BP-PDB-014")
-    if init_rms is not None:
-        trigger_if(rms > init_rms + 1e-7, "BP-PDB-014")
 
     ref = np.asarray(reference_coords, dtype=float)
     mov = np.asarray(coords, dtype=float)

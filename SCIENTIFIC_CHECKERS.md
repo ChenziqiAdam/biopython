@@ -1,8 +1,13 @@
 # SciBench scientific-sanitizer pilot
 
-This branch instruments 23 curated scientific invariants over `Bio.SeqUtils`.
-The original public code at commit `dc262b5c437e07a8cc1cfb8a734c0d84a4434b23`
-is unchanged in behaviour; this branch adds opt-in runtime checks.
+This branch instruments 25 curated scientific invariants (22 root-cause
+families) over `Bio.SeqUtils` and the `Bio.PDB` geometry primitives. Every
+invariant is a physical, chemical, geometric, or thermodynamic law whose
+violation has a domain consequence -- pure arithmetic identities, range
+checks, and generic software-correctness assertions are deliberately out of
+scope. The original public code at commit
+`dc262b5c437e07a8cc1cfb8a734c0d84a4434b23` is unchanged in behaviour; this
+branch adds opt-in runtime checks.
 
 Checkers are inactive during normal use. Set `SCIBENCH_TRIGGER_LOG` to a file
 before running tests:

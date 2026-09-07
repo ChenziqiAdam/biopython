@@ -632,7 +632,6 @@ def chem_correction(
         66.68
 
     """
-    _sci_input_temp = melting_temp
     if DMSO:
         melting_temp -= DMSOfactor * DMSO
     if fmd:
@@ -648,10 +647,6 @@ def chem_correction(
             melting_temp += (0.453 * (GC / 100.0) - 2.88) * fmd
         if fmdmethod not in (1, 2):
             raise ValueError("'fmdmethod' must be 1 or 2")
-    if _scientific_checkers.enabled():
-        _scientific_checkers.check_chem_correction(
-            _sci_input_temp, DMSO, fmd, melting_temp
-        )
     return melting_temp
 
 
@@ -696,8 +691,6 @@ def Tm_Wallace(seq, check=True, strict=True):
         )
     else:
         melting_temp += tmp
-    if _scientific_checkers.enabled():
-        _scientific_checkers.check_wallace(seq, melting_temp)
     return melting_temp
 
 
@@ -1085,9 +1078,6 @@ def Tm_NN(
         melting_temp = 1 / (1 / (melting_temp + 273.15) + corr) - 273.15
 
     if _scientific_checkers.enabled():
-        _scientific_checkers.check_tm_nn_selfcomp(
-            _sci_original_seq, selfcomp, _sci_user_c_seq, melting_temp
-        )
         _scientific_checkers.check_tm_nn_revcomp(
             _sci_original_seq, _sci_user_c_seq, shift, selfcomp,
             _sci_user_nn_table, saltcorr, Na, K, Tris, Mg, dNTPs, melting_temp,

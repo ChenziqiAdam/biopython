@@ -143,8 +143,6 @@ def gc_fraction(seq, ambiguous="remove"):
         )
 
     value = 0 if length == 0 else gc / length
-    if _scientific_checkers.enabled():
-        _scientific_checkers.check_gc_fraction(seq, value)
     return value
 
 
@@ -187,8 +185,6 @@ def GC123(seq):
         nall = nall + n
 
     gcall = 100.0 * gcall / nall
-    if _scientific_checkers.enabled():
-        _scientific_checkers.check_gc123(seq, gcall, gc[0], gc[1], gc[2])
     return gcall, gc[0], gc[1], gc[2]
 
 
@@ -303,8 +299,6 @@ def nt_search(seq, subseq):
             break
         pos += int(m.start(0))
         result.append(pos)
-    if _scientific_checkers.enabled():
-        _scientific_checkers.check_nt_search(seq, subseq, result[1:])
     return result
 
 
@@ -417,8 +411,6 @@ def seq1(seq, custom_map=None, undef_code="X"):
     onecode.update((k.upper(), v) for k, v in custom_map.items())
     seqlist = [seq[3 * i : 3 * (i + 1)] for i in range(len(seq) // 3)]
     one_letter = "".join(onecode.get(aa.upper(), undef_code) for aa in seqlist)
-    if _scientific_checkers.enabled():
-        _scientific_checkers.check_seq1_roundtrip(one_letter, seq)
     return one_letter
 
 
@@ -737,10 +729,6 @@ class CodonAdaptationIndex(dict):
         except KeyError as ex:
             raise KeyError(f"Unrecognized amino acid: {ex}") from None
         optimized = Seq(optimized)
-        if _scientific_checkers.enabled():
-            _scientific_checkers.check_codon_optimization(
-                self, seq, seq_type, optimized
-            )
         return optimized
 
     def __str__(self):

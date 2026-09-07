@@ -113,8 +113,6 @@ class ProteinAnalysis:
             aa: (count * 100 / self.length) for aa, count in aa_counts.items()
         }
 
-        if _scientific_checkers.enabled():
-            _scientific_checkers.check_aa_composition(self.sequence, percentages)
         return percentages
 
     def molecular_weight(self):
@@ -124,7 +122,7 @@ class ProteinAnalysis:
         )
         if _scientific_checkers.enabled():
             _scientific_checkers.check_protein_molecular_weight(
-                self.sequence, weight
+                self.sequence, self.monoisotopic, weight
             )
         return weight
 
@@ -139,8 +137,6 @@ class ProteinAnalysis:
 
         aromaticity = sum(aa_percentages[aa] / 100 for aa in aromatic_aas)
 
-        if _scientific_checkers.enabled():
-            _scientific_checkers.check_aromaticity(aromaticity)
         return aromaticity
 
     def instability_index(self):
@@ -164,9 +160,6 @@ class ProteinAnalysis:
         instability = (10.0 / self.length) * score
         if _scientific_checkers.enabled():
             _scientific_checkers.check_instability(self.sequence, instability)
-            _scientific_checkers.check_instability_homopolymer(
-                self.sequence, instability
-            )
         return instability
 
     def flexibility(self):
@@ -219,8 +212,6 @@ class ProteinAnalysis:
         total_gravy = sum(selected_scale[aa] for aa in self.sequence)
 
         value = total_gravy / self.length
-        if _scientific_checkers.enabled():
-            _scientific_checkers.check_gravy(self.sequence, scale, value)
         return value
 
     def _weight_list(self, window, edge):
@@ -366,8 +357,6 @@ class ProteinAnalysis:
         turn = sum(aa_percentages[r] / 100 for r in "NPGSD")
         sheet = sum(aa_percentages[r] / 100 for r in "VIYFWLT")
 
-        if _scientific_checkers.enabled():
-            _scientific_checkers.check_secondary_structure((helix, turn, sheet))
         return helix, turn, sheet
 
     def molar_extinction_coefficient(self):

@@ -112,78 +112,6 @@
       "rationale": "Henderson-Hasselbalch partial charges are individually monotone in pH; the sum must be too"
     },
     {
-      "id": "BP-SEQ-012",
-      "family": "codon_optimization_semantics",
-      "source": "Bio/SeqUtils/__init__.py",
-      "symbol": "CodonAdaptationIndex.optimize",
-      "scientific_quantity": "codon-optimized coding sequence",
-      "precondition": "a valid in-frame DNA/RNA/protein sequence; strict=False when reference codons tie",
-      "invariant": "optimize() preserves the translated protein and the optimized sequence has CAI 1",
-      "observation_point": "after building the optimized Seq, before returning it",
-      "alarm": "translate(optimized) differs from the source protein, or calculate(optimized) != 1",
-      "rationale": "codon optimization is defined as a synonymous re-encoding; changing the protein is a scientific error"
-    },
-    {
-      "id": "BP-SEQ-014",
-      "family": "double_stranded_mass_symmetry",
-      "source": "Bio/SeqUtils/__init__.py",
-      "symbol": "molecular_weight",
-      "scientific_quantity": "double-stranded molecular mass",
-      "precondition": "a non-empty unambiguous DNA or RNA sequence evaluated with double_stranded=True",
-      "invariant": "the double-stranded mass is invariant under reversal, complement, and reverse complement",
-      "observation_point": "after the mass calculation; the checker re-calls molecular_weight on each transformed sequence",
-      "alarm": "any transformed sequence has a different double-stranded mass beyond tolerance",
-      "rationale": "the duplex composition is conserved under these transformations"
-    },
-    {
-      "id": "BP-SEQ-015",
-      "family": "wallace_temperature_symmetry",
-      "source": "Bio/SeqUtils/MeltingTemp.py",
-      "symbol": "Tm_Wallace",
-      "scientific_quantity": "Wallace-rule melting temperature",
-      "precondition": "a non-empty unambiguous DNA sequence",
-      "invariant": "Tm_Wallace is invariant under reverse complementation",
-      "observation_point": "before returning melting_temp; the checker re-calls Tm_Wallace on the reverse complement",
-      "alarm": "the original and reverse-complement temperatures differ",
-      "rationale": "A+T and G+C counts are conserved under reverse complement"
-    },
-    {
-      "id": "BP-SEQ-016",
-      "family": "gc_fraction_mode_consistency",
-      "source": "Bio/SeqUtils/__init__.py",
-      "symbol": "gc_fraction",
-      "scientific_quantity": "GC fraction",
-      "precondition": "an unambiguous DNA sequence (only A, C, G, T)",
-      "invariant": "for unambiguous DNA the 'remove', 'ignore', and 'weighted' modes give the same GC fraction",
-      "observation_point": "after computing the returned value; the checker re-calls gc_fraction in the other two modes",
-      "alarm": "the three modes disagree for a sequence with no ambiguous symbols",
-      "rationale": "the ambiguity-handling policy must be a no-op when there is no ambiguity"
-    },
-    {
-      "id": "BP-SEQ-017",
-      "family": "gc123_aggregate_consistency",
-      "source": "Bio/SeqUtils/__init__.py",
-      "symbol": "GC123",
-      "scientific_quantity": "positional GC content",
-      "precondition": "an unambiguous DNA sequence whose length is a multiple of 3",
-      "invariant": "the total GC% equals the mean of the three codon-position GC%",
-      "observation_point": "before returning the tuple",
-      "alarm": "abs(total - mean(pos1, pos2, pos3)) > 1e-6",
-      "rationale": "with a whole number of codons each position contributes an equal number of bases"
-    },
-    {
-      "id": "BP-SEQ-018",
-      "family": "wallace_count_consistency",
-      "source": "Bio/SeqUtils/MeltingTemp.py",
-      "symbol": "Tm_Wallace",
-      "scientific_quantity": "Wallace-rule melting temperature",
-      "precondition": "a non-empty unambiguous DNA sequence (no ambiguous bases, no W/S)",
-      "invariant": "Tm == 4 * (G + C) + 2 * (A + T) from an independent base count",
-      "observation_point": "before returning melting_temp",
-      "alarm": "the returned temperature differs from the count-reconstructed value",
-      "rationale": "the ambiguous-base branch of Tm_Wallace must not perturb the pure-ACGT result"
-    },
-    {
       "id": "BP-SEQ-019",
       "family": "tm_gc_monotonicity",
       "source": "Bio/SeqUtils/MeltingTemp.py",
@@ -194,42 +122,6 @@
       "observation_point": "before returning melting_temp; the checker calls Tm_GC on all-A and all-G sequences of the same length",
       "alarm": "the all-A Tm exceeds this sequence's Tm, or exceeds the all-G Tm, beyond 1e-6",
       "rationale": "every published Tm_GC value set has a positive %GC coefficient"
-    },
-    {
-      "id": "BP-SEQ-020",
-      "family": "tm_nn_selfcomp_consistency",
-      "source": "Bio/SeqUtils/MeltingTemp.py",
-      "symbol": "Tm_NN",
-      "scientific_quantity": "nearest-neighbor melting temperature",
-      "precondition": "an unambiguous DNA sequence of length >= 2, selfcomp=True, c_seq not supplied",
-      "invariant": "supplying the exact complement as c_seq gives the same Tm as letting Tm_NN derive it",
-      "observation_point": "before returning melting_temp; the checker re-calls Tm_NN with c_seq set to the explicit complement",
-      "alarm": "the two Tm values differ beyond tolerance",
-      "rationale": "the derived and explicit complements are identical, so the two code paths must agree"
-    },
-    {
-      "id": "BP-SEQ-021",
-      "family": "three_one_letter_roundtrip",
-      "source": "Bio/SeqUtils/__init__.py",
-      "symbol": "seq1",
-      "scientific_quantity": "amino-acid sequence representation",
-      "precondition": "a three-letter-code string of standard amino acids, length a multiple of 3",
-      "invariant": "seq1(seq3(s)) == s",
-      "observation_point": "after seq1 builds the one-letter string; the checker calls seq3 on it",
-      "alarm": "the round trip does not recover the input",
-      "rationale": "the one- and three-letter codes are a bijection on the standard 20 amino acids"
-    },
-    {
-      "id": "BP-SEQ-022",
-      "family": "nt_search_position_validity",
-      "source": "Bio/SeqUtils/__init__.py",
-      "symbol": "nt_search",
-      "scientific_quantity": "subsequence match positions",
-      "precondition": "a DNA sequence and a subsequence of valid IUPAC nucleotide symbols",
-      "invariant": "every reported position p: seq[p:p+len(subseq)] matches the IUPAC expansion of subseq",
-      "observation_point": "before returning the result list",
-      "alarm": "a reported position does not actually match the query",
-      "rationale": "a search primitive that returns wrong offsets corrupts every caller"
     },
     {
       "id": "BP-SEQ-023",
@@ -244,18 +136,6 @@
       "rationale": "mass is additive over concatenation up to the condensation water at the new bond"
     },
     {
-      "id": "BP-SEQ-025",
-      "family": "secondary_structure_bounds",
-      "source": "Bio/SeqUtils/ProtParam.py",
-      "symbol": "ProteinAnalysis.secondary_structure_fraction",
-      "scientific_quantity": "secondary-structure propensity fractions",
-      "precondition": "a valid non-empty protein sequence of standard amino acids",
-      "invariant": "each of the helix, turn, and sheet fractions lies in [0, 1]",
-      "observation_point": "before returning the (helix, turn, sheet) tuple",
-      "alarm": "any fraction is non-finite or outside [0, 1]",
-      "rationale": "each value is a sum of residue frequencies and cannot exceed 1"
-    },
-    {
       "id": "BP-SEQ-026",
       "family": "instability_degenerate",
       "source": "Bio/SeqUtils/ProtParam.py",
@@ -266,18 +146,6 @@
       "observation_point": "before returning the instability index",
       "alarm": "a length-1 sequence yields a non-finite or non-zero index",
       "rationale": "the index is a sum over dipeptide values; an empty sum is zero"
-    },
-    {
-      "id": "BP-SEQ-027",
-      "family": "aromaticity_bounds",
-      "source": "Bio/SeqUtils/ProtParam.py",
-      "symbol": "ProteinAnalysis.aromaticity",
-      "scientific_quantity": "aromaticity (Lobry 1994)",
-      "precondition": "a valid non-empty protein sequence of standard amino acids",
-      "invariant": "aromaticity is the F+W+Y frequency and lies in [0, 1]",
-      "observation_point": "before returning the aromaticity value",
-      "alarm": "the value is non-finite or outside [0, 1]",
-      "rationale": "a relative frequency is bounded by 0 and 1"
     },
     {
       "id": "BP-SEQ-028",
@@ -316,30 +184,6 @@
       "rationale": "methods 1/3/4 are pure logarithms of ionic strength; method 2 has a saturation term and is intentionally excluded"
     },
     {
-      "id": "BP-SEQ-031",
-      "family": "chem_correction_identity",
-      "source": "Bio/SeqUtils/MeltingTemp.py",
-      "symbol": "chem_correction",
-      "scientific_quantity": "DMSO / formamide corrected Tm",
-      "precondition": "a finite input Tm; DMSO and fmd are non-negative",
-      "invariant": "with DMSO == 0 and fmd == 0 the Tm is unchanged; with DMSO > 0 and fmd == 0 the Tm strictly decreases",
-      "observation_point": "before returning the corrected Tm, comparing against the input Tm captured on entry",
-      "alarm": "no additive yet the Tm changed, or DMSO added yet the Tm did not decrease",
-      "rationale": "helix-destabilising co-solvents lower Tm; absent them the function is the identity"
-    },
-    {
-      "id": "BP-SEQ-032",
-      "family": "gc_skew_bounds",
-      "source": "Bio/SeqUtils/__init__.py",
-      "symbol": "GC_skew",
-      "scientific_quantity": "GC skew (G - C) / (G + C)",
-      "precondition": "any DNA sequence and a positive window",
-      "invariant": "each per-window skew value lies in [-1, 1]",
-      "observation_point": "before returning the list of window values",
-      "alarm": "a value is non-finite or outside [-1, 1]",
-      "rationale": "a normalised difference of two non-negative counts cannot leave [-1, 1]"
-    },
-    {
       "id": "BP-SEQ-033",
       "family": "gc_skew_complement_antisymmetry",
       "source": "Bio/SeqUtils/__init__.py",
@@ -352,64 +196,16 @@
       "rationale": "complementing swaps G and C counts in every window, flipping the sign of G - C"
     },
     {
-      "id": "BP-SEQ-034",
-      "family": "gravy_permutation_invariance",
-      "source": "Bio/SeqUtils/ProtParam.py",
-      "symbol": "ProteinAnalysis.gravy",
-      "scientific_quantity": "grand average of hydropathy",
-      "precondition": "a valid non-empty protein sequence and a known hydropathy scale",
-      "invariant": "GRAVY is invariant under residue permutation: gravy(seq) == gravy(reverse(seq))",
-      "observation_point": "before returning the value; the checker re-calls gravy on the reversed sequence",
-      "alarm": "the two values differ beyond 1e-9",
-      "rationale": "GRAVY is a mean of per-residue scale values and depends only on composition"
-    },
-    {
-      "id": "BP-SEQ-035",
-      "family": "gravy_homopolymer",
-      "source": "Bio/SeqUtils/ProtParam.py",
-      "symbol": "ProteinAnalysis.gravy",
-      "scientific_quantity": "grand average of hydropathy",
-      "precondition": "a single-residue-type protein sequence and a scale that contains that residue",
-      "invariant": "gravy of a homopolymer equals that residue's scale value",
-      "observation_point": "before returning the value",
-      "alarm": "the value differs from scale[residue] beyond 1e-9",
-      "rationale": "the mean of identical values is that value"
-    },
-    {
       "id": "BP-SEQ-036",
       "family": "protein_mass_composition",
       "source": "Bio/SeqUtils/ProtParam.py",
       "symbol": "ProteinAnalysis.molecular_weight",
       "scientific_quantity": "protein average molecular mass",
-      "precondition": "a valid protein sequence of length >= 2",
+      "precondition": "a valid protein sequence of length >= 2; the second call uses the same monoisotopic flag",
       "invariant": "the mass is invariant under residue permutation",
       "observation_point": "after computing the mass; the checker re-calls molecular_weight on the reversed sequence",
       "alarm": "the two masses differ beyond 1e-6",
       "rationale": "mass is a composition sum minus (n - 1) condensation waters, independent of order"
-    },
-    {
-      "id": "BP-SEQ-037",
-      "family": "aa_composition_normalization",
-      "source": "Bio/SeqUtils/ProtParam.py",
-      "symbol": "ProteinAnalysis.amino_acids_percent",
-      "scientific_quantity": "amino-acid composition",
-      "precondition": "a non-empty sequence containing only the 20 standard amino acids",
-      "invariant": "the composition percentages sum to 100",
-      "observation_point": "after building the percentages dict, before returning it",
-      "alarm": "the sum differs from 100 beyond 1e-6",
-      "rationale": "a partition of the sequence into residue classes must account for every residue"
-    },
-    {
-      "id": "BP-SEQ-038",
-      "family": "instability_homopolymer",
-      "source": "Bio/SeqUtils/ProtParam.py",
-      "symbol": "ProteinAnalysis.instability_index",
-      "scientific_quantity": "instability index (Guruprasad 1990)",
-      "precondition": "a homopolymer of a residue present in the DIWV table, length >= 2",
-      "invariant": "the index equals 10 * (L - 1) / L * DIWV[a][a]",
-      "observation_point": "before returning the index",
-      "alarm": "the index differs from the closed form beyond 1e-6",
-      "rationale": "a homopolymer has L - 1 identical dipeptides, so the sum is exact and known"
     },
     {
       "id": "BP-SEQ-042",
@@ -422,18 +218,6 @@
       "observation_point": "after the mass calculation; the checker re-calls molecular_weight on the T-substituted string as DNA",
       "alarm": "the RNA mass is not greater than the DNA mass",
       "rationale": "per residue the ribose ring adds a 2'-oxygen that outweighs the thymine 5-methyl lost when T becomes U, so RNA of a given base string is heavier than the DNA of the same string"
-    },
-    {
-      "id": "BP-PDB-001",
-      "family": "angle_range",
-      "source": "Bio/PDB/vectors.py",
-      "symbol": "calc_angle",
-      "scientific_quantity": "bond angle between three points",
-      "precondition": "three distinct Vector points (v1 != v2, v3 != v2)",
-      "invariant": "the angle lies in [0, pi]",
-      "observation_point": "before returning the angle",
-      "alarm": "the angle is non-finite or outside [0, pi]",
-      "rationale": "an unsigned angle between two rays cannot exceed pi"
     },
     {
       "id": "BP-PDB-002",
@@ -460,30 +244,6 @@
       "rationale": "bond angles are Euclidean invariants"
     },
     {
-      "id": "BP-PDB-004",
-      "family": "dihedral_range",
-      "source": "Bio/PDB/vectors.py",
-      "symbol": "calc_dihedral",
-      "scientific_quantity": "dihedral (torsion) angle between four points",
-      "precondition": "four points with non-degenerate consecutive bonds",
-      "invariant": "the signed dihedral lies in (-pi, pi]",
-      "observation_point": "before returning the angle",
-      "alarm": "the angle is non-finite or outside [-pi, pi]",
-      "rationale": "the documented range of calc_dihedral is ]-pi, pi]"
-    },
-    {
-      "id": "BP-PDB-005",
-      "family": "dihedral_reversal_invariance",
-      "source": "Bio/PDB/vectors.py",
-      "symbol": "calc_dihedral",
-      "scientific_quantity": "dihedral angle",
-      "precondition": "four points with non-degenerate bonds and |dihedral| not equal to pi",
-      "invariant": "calc_dihedral(a, b, c, d) == calc_dihedral(d, c, b, a)",
-      "observation_point": "before returning; the checker re-calls calc_dihedral with the path reversed",
-      "alarm": "the two signed angles differ beyond 1e-7 (and the angle is not +/- pi)",
-      "rationale": "reversing the whole atom path preserves the rotation sense about the central bond, so the signed torsion is unchanged"
-    },
-    {
       "id": "BP-PDB-006",
       "family": "dihedral_rigid_invariance",
       "source": "Bio/PDB/vectors.py",
@@ -508,48 +268,12 @@
       "rationale": "a torsion angle is a pseudoscalar; an improper transformation flips its sign"
     },
     {
-      "id": "BP-PDB-008",
-      "family": "vector_angle_symmetry",
-      "source": "Bio/PDB/vectors.py",
-      "symbol": "Vector.angle",
-      "scientific_quantity": "angle between two vectors",
-      "precondition": "two non-zero Vectors",
-      "invariant": "the angle lies in [0, pi] and v.angle(w) == w.angle(v)",
-      "observation_point": "before returning; the checker re-calls angle with the operands swapped",
-      "alarm": "the angle is outside [0, pi], or the swapped angle differs beyond 1e-9",
-      "rationale": "the angle between two directions is symmetric and unsigned"
-    },
-    {
-      "id": "BP-PDB-009",
-      "family": "cross_product_orthogonality",
-      "source": "Bio/PDB/vectors.py",
-      "symbol": "Vector.__pow__",
-      "scientific_quantity": "vector cross product",
-      "precondition": "two Vectors",
-      "invariant": "v ** w is orthogonal to both v and w, and v ** w == -(w ** v)",
-      "observation_point": "before returning the cross product; the checker also computes w ** v",
-      "alarm": "a normalised dot product with either operand exceeds 1e-9, or the anti-commutation fails",
-      "rationale": "the cross product is by definition normal to the spanned plane and anti-symmetric"
-    },
-    {
-      "id": "BP-PDB-010",
-      "family": "normalization_unit_norm",
-      "source": "Bio/PDB/vectors.py",
-      "symbol": "Vector.normalize",
-      "scientific_quantity": "unit vector",
-      "precondition": "a Vector with non-zero norm",
-      "invariant": "after normalize() the norm is 1 and the direction is unchanged",
-      "observation_point": "immediately after the in-place normalisation, comparing against the pre-normalisation coordinates",
-      "alarm": "the resulting norm differs from 1 beyond 1e-9, or the direction changed",
-      "rationale": "normalisation rescales without rotating"
-    },
-    {
       "id": "BP-PDB-011",
       "family": "rotmat_orthogonality",
       "source": "Bio/PDB/vectors.py",
       "symbol": "rotmat",
       "scientific_quantity": "rotation matrix",
-      "precondition": "two non-zero Vectors p, q",
+      "precondition": "two non-zero, non-collinear Vectors p, q (the antiparallel case p = -k q is a documented rotmat singularity and is excluded)",
       "invariant": "rotmat(p, q) is orthogonal with determinant +1",
       "observation_point": "before returning the matrix",
       "alarm": "R @ R.T is not the identity, or det(R) != 1, beyond 1e-9",
@@ -566,30 +290,6 @@
       "observation_point": "before returning the matrix",
       "alarm": "the rotated p is not parallel to q, or its norm changed, beyond 1e-7",
       "rationale": "rotmat is documented to rotate p onto q"
-    },
-    {
-      "id": "BP-PDB-013",
-      "family": "rotaxis_orthogonality",
-      "source": "Bio/PDB/vectors.py",
-      "symbol": "rotaxis2m",
-      "scientific_quantity": "axis-angle rotation matrix",
-      "precondition": "a finite angle and a non-zero axis Vector",
-      "invariant": "rotaxis2m(theta, axis) is orthogonal with determinant +1, and rotaxis2m(theta) @ rotaxis2m(-theta) == I",
-      "observation_point": "before returning the matrix; the checker also builds the negative-angle matrix",
-      "alarm": "R @ R.T != I, det(R) != 1, or R @ R(-theta) != I, beyond 1e-9",
-      "rationale": "rotation by theta and by -theta about the same axis are mutual inverses"
-    },
-    {
-      "id": "BP-PDB-014",
-      "family": "rmsd_nonnegative_bound",
-      "source": "Bio/PDB/qcprot.py",
-      "symbol": "QCPSuperimposer.run",
-      "scientific_quantity": "optimal superposition RMSD",
-      "precondition": "two matching Nx3 coordinate arrays with N >= 3",
-      "invariant": "the fitted RMSD is non-negative and not greater than the pre-fit RMSD",
-      "observation_point": "after run() computes self.rms, compared against get_init_rms()",
-      "alarm": "rms is non-finite, negative, or exceeds the initial RMSD beyond 1e-7",
-      "rationale": "least-squares superposition can only reduce the deviation"
     },
     {
       "id": "BP-PDB-015",

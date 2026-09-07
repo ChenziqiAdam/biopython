@@ -331,7 +331,7 @@ class QCPSuperimposer:
 
         if _scientific_checkers.enabled():
             _scientific_checkers.check_qcp(
-                self.reference_coords, self.coords, self.rms, self.get_init_rms()
+                self.reference_coords, self.coords, self.rms
             )
 
     # Getters
