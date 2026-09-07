@@ -818,7 +818,10 @@ def Tm_GC(
     if mismatch:
         melting_temp -= D * (seq.count("X") * 100.0 / len(seq))
     if _scientific_checkers.enabled():
-        _scientific_checkers.check_tm_gc_monotonicity(seq, melting_temp)
+        _scientific_checkers.check_tm_gc_monotonicity(
+            seq, melting_temp, valueset, userset, Na, K, Tris, Mg, dNTPs,
+            saltcorr, mismatch,
+        )
     return melting_temp
 
 

@@ -33,6 +33,7 @@ except ImportError:
     ) from None
 
 from Bio import BiopythonDeprecationWarning
+from Bio import _scientific_checkers
 from Bio.Align import _aligncore  # type: ignore
 from Bio.Align import _codonaligner  # type: ignore
 from Bio.Align import _pairwisealigner  # type: ignore
@@ -4500,11 +4501,16 @@ AlignmentCounts object returned by the .counts method of an Alignment object."""
                 sB = seqB  # C code will test the dtype
         score, paths = super().align(sA, sB, strand)
         alignments = PairwiseAlignments(seqA, seqB, score, paths)
+        if _scientific_checkers.enabled() and strand == "+":
+            _scientific_checkers.check_aligner_align_vs_score(
+                self, seqA, seqB, score
+            )
         return alignments
 
     def score(self, seqA, seqB, strand="+"):
         """Return the alignment score of two sequences using PairwiseAligner."""
         # self.warn_defaults_changed()  # FIXME remove this after 1.87 is out
+        _sci_seqA, _sci_seqB = seqA, seqB
         if isinstance(seqA, (bytes, Seq, MutableSeq, SeqRecord)):
             seqA = bytes(seqA)
             seqA = np.frombuffer(seqA, dtype=np.uint8).astype(np.int32)
@@ -4550,7 +4556,12 @@ AlignmentCounts object returned by the .counts method of an Alignment object."""
                 seqB = np.fromiter(
                     map(alphabet.index, seqB), dtype=np.int32, count=len(seqB)
                 )
-        return super().score(seqA, seqB, strand)
+        result = super().score(seqA, seqB, strand)
+        if _scientific_checkers.enabled() and strand == "+":
+            _scientific_checkers.check_aligner_score(
+                self, _sci_seqA, _sci_seqB, result
+            )
+        return result
 
     def __getstate__(self):
         state = {

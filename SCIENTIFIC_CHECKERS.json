@@ -302,6 +302,114 @@
       "observation_point": "after run(); the checker re-runs QCP on the rigidly moved moving set and on the swapped pair",
       "alarm": "either re-run's RMSD differs from this one beyond 1e-6",
       "rationale": "the optimal superposition distance is a metric on shapes, invariant to pose and symmetric"
+    },
+    {
+      "id": "BP-SUP-001",
+      "family": "superimposer_rotation_so3",
+      "source": "Bio/PDB/Superimposer.py",
+      "symbol": "Superimposer.set_atoms",
+      "scientific_quantity": "optimal superposition rotation matrix",
+      "precondition": "two equal-length lists of >=3 atoms whose coordinates are not all collinear",
+      "invariant": "the rotation returned by the SVD superposition is a proper rotation: R^T R = I and det(R) = +1",
+      "observation_point": "after SVDSuperimposer.run(), before Superimposer.set_atoms returns",
+      "alarm": "||R^T R - I|| > 1e-6 or |det(R) - 1| > 1e-6",
+      "rationale": "a reflection (det -1) superposes mirror-image structures and would make an enantiomer look identical to its mirror"
+    },
+    {
+      "id": "BP-SUP-002",
+      "family": "superimposer_rmsd_rigid_invariance",
+      "source": "Bio/PDB/Superimposer.py",
+      "symbol": "Superimposer.set_atoms",
+      "scientific_quantity": "minimum-RMSD superposition distance",
+      "precondition": "two equal-length, non-collinear atom lists",
+      "invariant": "the optimal-superposition RMSD is unchanged when the moving coordinates are first transformed by an arbitrary rigid motion",
+      "observation_point": "after SVDSuperimposer.run(), before set_atoms returns",
+      "alarm": "|rms(fixed, rigid(moving)) - rms(fixed, moving)| > 1e-6",
+      "rationale": "the least-squares superposition distance is an intrinsic property of the two shapes and cannot depend on their initial placement"
+    },
+    {
+      "id": "BP-SUP-003",
+      "family": "superimposer_rmsd_symmetry",
+      "source": "Bio/PDB/Superimposer.py",
+      "symbol": "Superimposer.set_atoms",
+      "scientific_quantity": "minimum-RMSD superposition distance",
+      "precondition": "two equal-length, non-collinear atom lists",
+      "invariant": "the optimal-superposition RMSD is symmetric in its two arguments: rms(A, B) = rms(B, A)",
+      "observation_point": "after SVDSuperimposer.run(), before set_atoms returns",
+      "alarm": "|rms(moving, fixed) - rms(fixed, moving)| > 1e-6 * max(1, rms)",
+      "rationale": "superposition RMSD is a metric on conformations; asymmetry means the centroid or normalisation handling differs between the two roles"
+    },
+    {
+      "id": "BP-SUP-004",
+      "family": "superimposer_exact_solution",
+      "source": "Bio/PDB/Superimposer.py",
+      "symbol": "Superimposer.set_atoms",
+      "scientific_quantity": "minimum-RMSD superposition distance",
+      "precondition": "the moving atom list is an exact rigid image of the fixed atom list (>=3 non-collinear atoms)",
+      "invariant": "the optimal-superposition RMSD is 0",
+      "observation_point": "after SVDSuperimposer.run(), before set_atoms returns",
+      "alarm": "rms(fixed, rigid(fixed)) > 1e-4",
+      "rationale": "two structures that are congruent by a rigid motion must be superposable to zero; a non-zero result means the algorithm missed a known exact solution (e.g. the SVD sign branch)"
+    },
+    {
+      "id": "BP-SUP-007",
+      "family": "superimposer_permutation_invariance",
+      "source": "Bio/PDB/Superimposer.py",
+      "symbol": "Superimposer.set_atoms",
+      "scientific_quantity": "minimum-RMSD superposition distance",
+      "precondition": "two equal-length, non-collinear atom lists",
+      "invariant": "applying the same row permutation to both atom lists leaves the optimal-superposition RMSD unchanged",
+      "observation_point": "after SVDSuperimposer.run(), before set_atoms returns",
+      "alarm": "|rms(P.fixed, P.moving) - rms(fixed, moving)| > 1e-6",
+      "rationale": "RMSD sums over paired points; a dependence on enumeration order means an index-order assumption has leaked into the computation"
+    },
+    {
+      "id": "BP-ALN-001",
+      "family": "aligner_score_symmetry",
+      "source": "Bio/Align/__init__.py",
+      "symbol": "PairwiseAligner.score",
+      "scientific_quantity": "optimal pairwise alignment score",
+      "precondition": "mode='global'; a symmetric scoring scheme (scalar match/mismatch or a symmetric substitution matrix; target-side and query-side gap scores equal); two non-empty sequences",
+      "invariant": "score(A, B) = score(B, A)",
+      "observation_point": "after PairwiseAligner.score computes the score, before it returns",
+      "alarm": "|score(B, A) - score(A, B)| > 1e-9 (relative)",
+      "rationale": "under a symmetric scoring model the optimal alignment score is a symmetric function of the sequence pair; asymmetry means target/query gap or matrix indexing is not even-handed and homology calls depend on argument order"
+    },
+    {
+      "id": "BP-ALN-003",
+      "family": "aligner_align_vs_score",
+      "source": "Bio/Align/__init__.py",
+      "symbol": "PairwiseAligner.align / PairwiseAligner.score",
+      "scientific_quantity": "optimal pairwise alignment score",
+      "precondition": "two non-empty sequences expressible as text; any valid scoring scheme; any mode",
+      "invariant": "the score reported by score() equals the score of the best alignment returned by align()",
+      "observation_point": "after PairwiseAligner.align builds the alignments, before returning",
+      "alarm": "|score(A, B) - align(A, B).score| > 1e-9 (relative)",
+      "rationale": "the score-only dynamic program and the traceback share an optimum by construction; a discrepancy means one of the two recurrences is wrong"
+    },
+    {
+      "id": "BP-ALN-006",
+      "family": "aligner_reverse_invariance",
+      "source": "Bio/Align/__init__.py",
+      "symbol": "PairwiseAligner.score",
+      "scientific_quantity": "optimal global pairwise alignment score",
+      "precondition": "mode='global'; symmetric scoring scheme; left-end and right-end gap scores equal; two non-empty sequences",
+      "invariant": "score(A, B) = score(reverse(A), reverse(B))",
+      "observation_point": "after PairwiseAligner.score computes the score, before it returns",
+      "alarm": "|score(A[::-1], B[::-1]) - score(A, B)| > 1e-9 (relative)",
+      "rationale": "reversing both sequences transposes the dynamic-programming matrix; a change in the global score means the left/right boundary gap handling is asymmetric"
+    },
+    {
+      "id": "BP-ALN-009",
+      "family": "aligner_matrix_transpose",
+      "source": "Bio/Align/__init__.py",
+      "symbol": "PairwiseAligner.score",
+      "scientific_quantity": "optimal pairwise alignment score",
+      "precondition": "mode='global'; a symmetric substitution matrix is set; equal target/query gap scores; two non-empty sequences",
+      "invariant": "replacing the substitution matrix with its transpose does not change the score",
+      "observation_point": "after PairwiseAligner.score computes the score, before it returns",
+      "alarm": "|score_with(M^T) - score_with(M)| > 1e-9 (relative)",
+      "rationale": "for a symmetric substitution model the matrix transpose is the identity operation; a difference means the aligner indexes the matrix as M[a][b] where it should use M[b][a] (or vice versa)"
     }
   ]
 }

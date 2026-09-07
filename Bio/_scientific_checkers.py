@@ -239,20 +239,23 @@ def check_molecular_weight(original_seq, seq_type, double_stranded, circular,
 # --- MeltingTemp ---------------------------------------------------------
 
 @_guard("tm_gc_monotonicity")
-def check_tm_gc_monotonicity(seq, temperature):
+def check_tm_gc_monotonicity(seq, temperature, valueset, userset, Na, K, Tris,
+                             Mg, dNTPs, saltcorr, mismatch):
     """BP-SEQ-019: duplex thermodynamics -- a G:C pair contributes three
     hydrogen bonds versus two for A:T, so at fixed length raising %GC cannot
-    lower the melting temperature.
+    lower the melting temperature. The two comparison endpoints are computed
+    with the *same* value set and salt/mismatch parameters as the production
+    call, so the invariant holds for any parameterisation, not just default.
     """
     from Bio.SeqUtils.MeltingTemp import Tm_GC
 
     text = str(seq).upper().replace("U", "T")
     if len(text) < 4 or set(text) - set("ACGT"):
         return
-    lower = "A" * len(text)
-    higher = "G" * len(text)
-    tm_lower = Tm_GC(lower)
-    tm_higher = Tm_GC(higher)
+    kw = dict(valueset=valueset, userset=userset, Na=Na, K=K, Tris=Tris, Mg=Mg,
+              dNTPs=dNTPs, saltcorr=saltcorr, mismatch=mismatch)
+    tm_lower = Tm_GC("A" * len(text), **kw)
+    tm_higher = Tm_GC("G" * len(text), **kw)
     trigger_if(
         tm_lower - temperature > 1e-6 or temperature - tm_higher > 1e-6,
         "BP-SEQ-019",
@@ -524,3 +527,177 @@ def check_qcp(reference_coords, coords, rms):
     swapped.set(mov, ref)
     swapped.run()
     trigger_if(not _isclose(swapped.get_rms(), rms, tol=1e-6), "BP-PDB-015")
+
+
+# ======================================================================
+# Bio.PDB.Superimposer / SVDSuperimposer
+# ======================================================================
+
+@_guard("superimposer")
+def check_superimposer(fixed_coord, moving_coord, rot, tran, rms):
+    """BP-SUP-001 rotation in SO(3); BP-SUP-002 RMSD rigid invariance;
+    BP-SUP-003 RMSD argument symmetry; BP-SUP-004 exact solution;
+    BP-SUP-007 permutation invariance.
+
+    A least-squares superposition returns a *proper* rotation (orthogonal,
+    determinant +1 -- a reflection would match mirror images, 001). The optimal
+    RMSD is an intrinsic distance between the two point sets: unchanged by a
+    rigid motion of the moving set before fitting (002), symmetric in its two
+    arguments (003), zero when one set is a rigid image of the other (004), and
+    independent of the order the point pairs are listed in (007).
+    """
+    import numpy as np
+
+    from Bio.SVDSuperimposer import SVDSuperimposer
+
+    ref = np.asarray(fixed_coord, dtype=float)
+    mov = np.asarray(moving_coord, dtype=float)
+    if ref.shape != mov.shape or ref.shape[0] < 3 or ref.shape[1] != 3:
+        return
+    r = np.asarray(rot, dtype=float)
+
+    trigger_if(not np.allclose(r.T @ r, np.eye(3), atol=1e-6), "BP-SUP-001")
+    trigger_if(abs(float(np.linalg.det(r)) - 1.0) > 1e-6, "BP-SUP-001")
+
+    def _fit(a, b):
+        s = SVDSuperimposer()
+        s.set(np.asarray(a, dtype=float), np.asarray(b, dtype=float))
+        s.run()
+        return float(s.get_rms())
+
+    moved = np.asarray(_rigid_transform(list(mov)))
+    trigger_if(abs(_fit(ref, moved) - rms) > 1e-6, "BP-SUP-002")
+
+    trigger_if(abs(_fit(mov, ref) - rms) > 1e-6 * max(1.0, abs(rms)), "BP-SUP-003")
+
+    exact = np.asarray(_rigid_transform(list(ref)))
+    trigger_if(_fit(ref, exact) > 1e-4, "BP-SUP-004")
+
+    perm = np.random.RandomState(0).permutation(ref.shape[0])
+    trigger_if(abs(_fit(ref[perm], mov[perm]) - rms) > 1e-6, "BP-SUP-007")
+
+
+# ======================================================================
+# Bio.Align.PairwiseAligner
+# ======================================================================
+
+def _seq_text(seq):
+    """Return a plain string for a str/Seq/bytes sequence, else None.
+
+    A checker that cannot express the sequence as text (e.g. a list of
+    arbitrary tokens, or an already-encoded integer array) simply does not
+    run -- it never guesses.
+    """
+    from Bio.Seq import MutableSeq, Seq
+
+    if isinstance(seq, str):
+        return seq
+    if isinstance(seq, (Seq, MutableSeq)):
+        return str(seq)
+    if isinstance(seq, (bytes, bytearray)):
+        try:
+            return seq.decode("ascii")
+        except Exception:
+            return None
+    return None
+
+
+def _clone_aligner(aligner):
+    """Return an independent PairwiseAligner with the same scoring scheme."""
+    from Bio.Align import PairwiseAligner
+
+    clone = PairwiseAligner()
+    clone.__setstate__(aligner.__getstate__())
+    return clone
+
+
+def _symmetric_scoring(aligner):
+    """True when the aligner's scoring scheme is symmetric in target/query."""
+    import numpy as np
+
+    if aligner.open_internal_insertion_score != aligner.open_internal_deletion_score:
+        return False
+    if (aligner.extend_internal_insertion_score
+            != aligner.extend_internal_deletion_score):
+        return False
+    if aligner.open_left_insertion_score != aligner.open_left_deletion_score:
+        return False
+    if aligner.open_right_insertion_score != aligner.open_right_deletion_score:
+        return False
+    matrix = aligner.substitution_matrix
+    if matrix is not None:
+        arr = np.asarray(matrix)
+        return arr.ndim == 2 and np.allclose(arr, arr.T)
+    return True
+
+
+@_guard("aligner_score")
+def check_aligner_score(aligner, seqA, seqB, score):
+    """BP-ALN-001 score symmetry; BP-ALN-006 double-reversal invariance;
+    BP-ALN-009 substitution-matrix transpose invariance.
+
+    Under a symmetric scoring scheme the optimal global alignment score is a
+    symmetric function of the two sequences (001); reversing *both* sequences
+    transposes the dynamic-programming matrix and must not change the global
+    score (006); and for a symmetric substitution matrix, replacing it with its
+    transpose is the identity (009).
+    """
+    try:
+        if str(aligner.mode) != "global":
+            return
+    except Exception:
+        return
+    a, b = _seq_text(seqA), _seq_text(seqB)
+    if a is None or b is None or not a or not b:
+        return
+    if not _symmetric_scoring(aligner):
+        return
+
+    clone = _clone_aligner(aligner)
+    trigger_if(not _isclose(float(clone.score(b, a)), float(score), tol=1e-9),
+               "BP-ALN-001")
+
+    lr_symmetric = (
+        aligner.open_left_insertion_score == aligner.open_right_insertion_score
+        and aligner.extend_left_insertion_score
+        == aligner.extend_right_insertion_score
+        and aligner.open_left_deletion_score == aligner.open_right_deletion_score
+        and aligner.extend_left_deletion_score
+        == aligner.extend_right_deletion_score
+    )
+    if lr_symmetric:
+        clone2 = _clone_aligner(aligner)
+        trigger_if(
+            not _isclose(
+                float(clone2.score(a[::-1], b[::-1])), float(score), tol=1e-9
+            ),
+            "BP-ALN-006",
+        )
+
+    matrix = aligner.substitution_matrix
+    if matrix is not None:
+        import numpy as np
+
+        transposed = matrix.transpose() if hasattr(matrix, "transpose") else None
+        if transposed is not None and np.allclose(np.asarray(matrix),
+                                                  np.asarray(transposed)):
+            clone3 = _clone_aligner(aligner)
+            clone3.substitution_matrix = transposed
+            trigger_if(
+                not _isclose(float(clone3.score(a, b)), float(score), tol=1e-9),
+                "BP-ALN-009",
+            )
+
+
+@_guard("aligner_align_vs_score")
+def check_aligner_align_vs_score(aligner, seqA, seqB, align_score):
+    """BP-ALN-003: the score returned by ``score()`` and the score of the best
+    alignment returned by ``align()`` are computed by two different code paths
+    (score-only DP vs. traceback) and must agree, in any alignment mode.
+    """
+    a, b = _seq_text(seqA), _seq_text(seqB)
+    if a is None or b is None or not a or not b:
+        return
+    clone = _clone_aligner(aligner)
+    trigger_if(not _isclose(float(clone.score(a, b)), float(align_score), tol=1e-9),
+               "BP-ALN-003")
