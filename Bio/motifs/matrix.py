@@ -20,6 +20,8 @@ from Bio.Seq import Seq
 
 from . import _pwm  # type: ignore
 
+from Bio import _scientific_checkers
+
 
 class GenericPositionMatrix(dict):
     """Base class for the support of position matrix operations."""
@@ -448,9 +450,16 @@ class PositionSpecificScoringMatrix(GenericPositionMatrix):
         _pwm.calculate(sequence, logodds, scores)
 
         if len(scores) == 1:
-            return scores[0]
+            result = scores[0]
         else:
-            return scores
+            result = scores
+
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_pssm_score_additivity(self, sequence, result)
+            _scientific_checkers.check_pssm_score_bounds(self, sequence, result)
+            _scientific_checkers.check_pssm_revcomp(self, sequence, result)
+
+        return result
 
     def search(self, sequence, threshold=0.0, both=True, chunksize=10**6):
         """Find hits with PWM score above given threshold.

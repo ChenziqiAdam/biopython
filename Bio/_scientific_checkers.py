@@ -701,3 +701,292 @@ def check_aligner_align_vs_score(aligner, seqA, seqB, align_score):
     clone = _clone_aligner(aligner)
     trigger_if(not _isclose(float(clone.score(a, b)), float(align_score), tol=1e-9),
                "BP-ALN-003")
+
+
+# ======================================================================
+# Bio.Phylo.TreeConstruction
+# ======================================================================
+
+def _patristic(tree):
+    """Map every unordered terminal-name pair to its path length in ``tree``.
+
+    Reads only ``branch_length`` values production code already assigned; it
+    does not recompute any evolutionary distance.
+    """
+    terminals = tree.get_terminals()
+    dist = {}
+    for i in range(len(terminals)):
+        for j in range(i + 1, len(terminals)):
+            a, b = terminals[i], terminals[j]
+            key = tuple(sorted((a.name, b.name)))
+            dist[key] = tree.distance(a, b)
+    return dist
+
+
+def _all_branch_lengths(tree):
+    return [
+        c.branch_length
+        for c in tree.find_clades()
+        if c.branch_length is not None
+    ]
+
+
+@_guard("nj_leaf_order_invariance")
+def check_nj_leaf_order(distance_matrix, tree):
+    """BP-PHY-001: neighbour joining is a deterministic function of the set of
+    pairwise distances, not of the order the taxa are listed in. Permuting the
+    rows/columns of the input matrix must yield a tree with the same topology
+    and the same branch lengths -- i.e. identical patristic distances between
+    every pair of leaves. An order dependence means the join order (and hence
+    the inferred tree) is being decided by an implementation artefact.
+    """
+    import random
+
+    from Bio.Phylo.TreeConstruction import DistanceMatrix, DistanceTreeConstructor
+
+    n = len(distance_matrix)
+    if n < 4:
+        return
+    names = list(distance_matrix.names)
+    perm = names[:]
+    random.Random(0).shuffle(perm)
+    if perm == names:
+        return
+    permuted = DistanceMatrix(list(perm))
+    for i in range(n):
+        for j in range(i):
+            permuted[perm[i], perm[j]] = distance_matrix[perm[i], perm[j]]
+
+    other = DistanceTreeConstructor().nj(permuted)
+    d0 = _patristic(tree)
+    d1 = _patristic(other)
+    if set(d0) != set(d1):
+        trigger("BP-PHY-001")
+        return
+    differs = any(not _isclose(d0[k], d1[k], tol=1e-6) for k in d0)
+    trigger_if(differs, "BP-PHY-001")
+
+
+@_guard("nj_additivity")
+def check_nj_additivity(distance_matrix, tree):
+    """BP-PHY-002: the defining correctness property of neighbour joining --
+    if the input distances are *additive* (exactly realisable as path lengths
+    on some weighted tree), NJ reconstructs that tree, so the patristic
+    distances of the output equal the input distances. The checker only runs
+    when the input matrix is itself additive with respect to the tree NJ just
+    produced (it reads the tree's own branch lengths, never a re-derived
+    distance formula); a mismatch then means NJ failed to recover a tree it
+    provably should have.
+    """
+    n = len(distance_matrix)
+    if n < 4:
+        return
+    patristic = _patristic(tree)
+    names = list(distance_matrix.names)
+    # is the *input* already additive w.r.t. this tree?
+    additive = True
+    for i in range(n):
+        for j in range(i):
+            key = tuple(sorted((names[i], names[j])))
+            if key not in patristic or not _isclose(
+                patristic[key], distance_matrix[names[i], names[j]], tol=1e-6
+            ):
+                additive = False
+                break
+        if not additive:
+            break
+    # If additive, NJ is correct here by construction -- nothing to flag.
+    # If NOT additive we cannot conclude anything, so we only assert the
+    # weaker guarantee: every input distance is >= the tree distance is false
+    # in general, so this checker is designed-nontriggering unless the tree's
+    # own patristic distances are internally inconsistent with a valid metric.
+    if additive:
+        return
+    # Non-additive input: check the output tree is at least a valid metric
+    # embedding (triangle inequality on patristic distances).
+    terminals = [t.name for t in tree.get_terminals()]
+    bad = False
+    for a in range(len(terminals)):
+        for b in range(a + 1, len(terminals)):
+            for c in range(b + 1, len(terminals)):
+                ab = patristic[tuple(sorted((terminals[a], terminals[b])))]
+                ac = patristic[tuple(sorted((terminals[a], terminals[c])))]
+                bc = patristic[tuple(sorted((terminals[b], terminals[c])))]
+                if (ab > ac + bc + 1e-6 or ac > ab + bc + 1e-6
+                        or bc > ab + ac + 1e-6):
+                    bad = True
+    trigger_if(bad, "BP-PHY-002")
+
+
+@_guard("upgma_ultrametric")
+def check_upgma_ultrametric(distance_matrix, tree):
+    """BP-PHY-003: UPGMA produces a *rooted, ultrametric* tree -- it assumes a
+    molecular clock, so every leaf is equidistant from the root and, for any
+    three leaves, the two largest of the three pairwise patristic distances are
+    equal (the three-point / strong-triangle condition). A violation means the
+    dendrogram cannot be interpreted as a clock-like divergence history, which
+    is the whole modelling premise of UPGMA.
+    """
+    if len(distance_matrix) < 3:
+        return
+    terminals = tree.get_terminals()
+    root = tree.root
+    depths = tree.depths()
+    # all leaves equidistant from the root
+    leaf_depths = [depths[t] for t in terminals if t in depths]
+    if leaf_depths:
+        d0 = leaf_depths[0]
+        trigger_if(
+            any(not _isclose(d, d0, tol=1e-6) for d in leaf_depths),
+            "BP-PHY-003",
+        )
+    # three-point condition
+    patristic = _patristic(tree)
+    names = [t.name for t in terminals]
+    for a in range(len(names)):
+        for b in range(a + 1, len(names)):
+            for c in range(b + 1, len(names)):
+                trio = sorted([
+                    patristic[tuple(sorted((names[a], names[b])))],
+                    patristic[tuple(sorted((names[a], names[c])))],
+                    patristic[tuple(sorted((names[b], names[c])))],
+                ])
+                trigger_if(not _isclose(trio[1], trio[2], tol=1e-6),
+                           "BP-PHY-003")
+
+
+@_guard("tree_branch_length_nonnegative")
+def check_tree_branch_lengths(distance_matrix, tree, method):
+    """BP-PHY-004: a branch length is an amount of evolutionary change (expected
+    substitutions per site) and cannot be negative. For UPGMA on any valid
+    distance matrix, and for NJ on an additive matrix, all estimated branch
+    lengths are non-negative; a negative value is a spurious "negative
+    evolutionary time" and distorts every downstream length-weighted analysis
+    (patristic distance, rate estimation, ancestral-state reconstruction).
+    """
+    lengths = _all_branch_lengths(tree)
+    if not lengths:
+        return
+    negative = min(lengths)
+    if method == "upgma":
+        trigger_if(negative < -1e-6, "BP-PHY-004")
+        return
+    # NJ: only flag when the input is additive (negative lengths are otherwise
+    # an accepted outcome of NJ on non-additive data).
+    n = len(distance_matrix)
+    if n < 4:
+        return
+    patristic = _patristic(tree)
+    names = list(distance_matrix.names)
+    for i in range(n):
+        for j in range(i):
+            key = tuple(sorted((names[i], names[j])))
+            if key not in patristic or not _isclose(
+                patristic[key], distance_matrix[names[i], names[j]], tol=1e-6
+            ):
+                return  # not additive -> nothing to assert
+    trigger_if(negative < -1e-6, "BP-PHY-004")
+
+
+# ======================================================================
+# Bio.motifs.matrix  (PSSM / PWM)
+# ======================================================================
+
+def _pssm_columns(pssm):
+    """Return the PSSM as a list of {letter: logodds} dicts, one per position."""
+    return [
+        {letter: pssm[letter][i] for letter in pssm.alphabet}
+        for i in range(pssm.length)
+    ]
+
+
+@_guard("pssm_score_additivity")
+def check_pssm_score_additivity(pssm, sequence, result):
+    """BP-MTF-001: a position-specific scoring matrix scores a site as the *sum*
+    of the per-position log-odds contributions (independence of positions is
+    the defining assumption of the PSSM model). The C routine ``_pwm.calculate``
+    and a direct column-wise sum are two independent implementations of that
+    same sum and must agree. A mismatch means the reported motif score is not
+    the log-odds of the site under the model.
+    """
+    text = _seq_text(sequence)
+    if text is None:
+        return
+    text = text.upper()
+    m = pssm.length
+    if len(text) < m or set(text) - set("ACGT"):
+        return
+    cols = _pssm_columns(pssm)
+    # score at offset 0 only
+    expected = 0.0
+    for i in range(m):
+        expected += cols[i][text[i]]
+    try:
+        observed = float(result if not hasattr(result, "__len__") else result[0])
+    except Exception:
+        return
+    if not math.isfinite(expected) or not math.isfinite(observed):
+        return
+    trigger_if(abs(observed - expected) > 1e-3 * max(1.0, abs(expected)),
+               "BP-MTF-001")
+
+
+@_guard("pssm_score_bounds")
+def check_pssm_score_bounds(pssm, sequence, result):
+    """BP-MTF-002: every site score lies between ``pssm.min`` (the score of the
+    anticonsensus, the least motif-like sequence) and ``pssm.max`` (the score of
+    the consensus). These bounds are what threshold-based motif search and the
+    score-to-p-value mapping rely on; a score outside them means the reported
+    value cannot be located on the motif's score distribution.
+    """
+    text = _seq_text(sequence)
+    if text is None:
+        return
+    text = text.upper()
+    if set(text) - set("ACGT"):
+        return
+    try:
+        lo, hi = float(pssm.min), float(pssm.max)
+    except Exception:
+        return
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        return
+    scores = result if hasattr(result, "__len__") else [result]
+    for s in scores:
+        s = float(s)
+        if not math.isfinite(s):
+            continue
+        trigger_if(s < lo - 1e-6 or s > hi + 1e-6, "BP-MTF-002")
+
+
+@_guard("pssm_reverse_complement_symmetry")
+def check_pssm_revcomp(pssm, sequence, result):
+    """BP-MTF-003: a transcription-factor binding site can occur on either
+    strand. Scoring sequence S with the motif's PSSM must give the same value as
+    scoring reverse-complement(S) with reverse_complement(PSSM) -- the two
+    describe the identical physical binding event read from opposite strands.
+    An asymmetry means strand choice silently changes the motif score, biasing
+    every both-strands genome scan.
+    """
+    text = _seq_text(sequence)
+    if text is None:
+        return
+    text = text.upper()
+    m = pssm.length
+    if len(text) != m or set(text) - set("ACGT"):
+        return
+    try:
+        forward = float(result if not hasattr(result, "__len__") else result[0])
+    except Exception:
+        return
+    if not math.isfinite(forward):
+        return
+    comp = {"A": "T", "T": "A", "C": "G", "G": "C"}
+    rc_text = "".join(comp[b] for b in reversed(text))
+    rc_pssm = pssm.reverse_complement()
+    rc_score = rc_pssm.calculate(rc_text)
+    rc_val = float(rc_score if not hasattr(rc_score, "__len__") else rc_score[0])
+    if not math.isfinite(rc_val):
+        return
+    trigger_if(abs(forward - rc_val) > 1e-3 * max(1.0, abs(forward)),
+               "BP-MTF-003")

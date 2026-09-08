@@ -13,6 +13,7 @@ import numbers
 from Bio.Phylo import BaseTree
 from Bio.Align import Alignment, MultipleSeqAlignment
 from Bio.Align import substitution_matrices
+from Bio import _scientific_checkers
 
 
 # flake8: noqa
@@ -762,7 +763,13 @@ class DistanceTreeConstructor(TreeConstructor):
 
             del dm[min_i]
         inner_clade.branch_length = 0
-        return BaseTree.Tree(inner_clade)
+        tree = BaseTree.Tree(inner_clade)
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_upgma_ultrametric(distance_matrix, tree)
+            _scientific_checkers.check_tree_branch_lengths(
+                distance_matrix, tree, "upgma"
+            )
+        return tree
 
     def nj(self, distance_matrix):
         """Construct and return a Neighbor Joining tree.
@@ -865,7 +872,14 @@ class DistanceTreeConstructor(TreeConstructor):
             clades[1].clades.append(clades[0])
             root = clades[1]
 
-        return BaseTree.Tree(root, rooted=False)
+        tree = BaseTree.Tree(root, rooted=False)
+        if _scientific_checkers.enabled():
+            _scientific_checkers.check_nj_leaf_order(distance_matrix, tree)
+            _scientific_checkers.check_nj_additivity(distance_matrix, tree)
+            _scientific_checkers.check_tree_branch_lengths(
+                distance_matrix, tree, "nj"
+            )
+        return tree
 
     def _height_of(self, clade):
         """Calculate clade height -- the longest path to any terminal (PRIVATE)."""
