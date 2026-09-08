@@ -417,11 +417,11 @@
       "source": "Bio/Phylo/TreeConstruction.py",
       "symbol": "DistanceTreeConstructor.nj",
       "scientific_quantity": "neighbour-joining tree (topology + branch lengths)",
-      "precondition": "a DistanceMatrix with >= 4 taxa produced through the public API; the NJ main branch (n>2)",
-      "invariant": "permuting the rows/columns of the input matrix yields a tree with identical patristic distances between every pair of leaves",
+      "precondition": "an ADDITIVE DistanceMatrix (input distances exactly realisable as path lengths on a weighted tree) with >= 4 taxa; the NJ main branch (n>2). Non-additive input is out of scope: tied Q-matrix minima make several NJ trees equally valid there.",
+      "invariant": "for additive input, permuting the rows/columns of the matrix yields a tree with identical patristic distances between every pair of leaves",
       "observation_point": "after nj() builds the tree, before returning",
-      "alarm": "any leaf-pair patristic distance differs by > 1e-6 between the tree and the tree built from a row/col-permuted copy of the same matrix",
-      "rationale": "NJ is a function of the multiset of pairwise distances, not taxon order; an order dependence means the join sequence is decided by an implementation artefact and the inferred phylogeny is not well-defined"
+      "alarm": "additive input and any leaf-pair patristic distance differs by > 1e-6 between the tree and the tree built from a row/col-permuted copy",
+      "rationale": "for additive data NJ reconstructs the unique generating tree; an order dependence then means the join sequence is decided by an implementation artefact rather than the data"
     },
     {
       "id": "BP-PHY-002",
@@ -429,11 +429,11 @@
       "source": "Bio/Phylo/TreeConstruction.py",
       "symbol": "DistanceTreeConstructor.nj",
       "scientific_quantity": "reconstructed patristic distances",
-      "precondition": "NJ output on >= 4 taxa; checker asserts only when the input matrix is additive w.r.t. the produced tree (else it asserts the triangle inequality on the output patristic distances)",
-      "invariant": "if the input distances are additive, NJ reconstructs the generating tree exactly (output patristic distances = input distances); the output patristic distances always satisfy the triangle inequality",
+      "precondition": "an ADDITIVE DistanceMatrix with >= 4 taxa; the NJ main branch. Non-additive input is out of scope (NJ gives no reconstruction guarantee and negative branch lengths there are documented, expected behaviour).",
+      "invariant": "for additive input, NJ reconstructs the generating tree exactly: every output patristic distance equals the corresponding input distance",
       "observation_point": "after nj() builds the tree, before returning",
-      "alarm": "additive input and output patristic distance != input distance; or a patristic triangle inequality violation > 1e-6",
-      "rationale": "exact reconstruction on additive data is the correctness theorem for NJ; a metric-violating output tree cannot embed in any tree metric"
+      "alarm": "additive input and an output patristic distance differs from the input distance by > 1e-6",
+      "rationale": "exact reconstruction on additive data is the correctness theorem for NJ (Saitou-Nei 1987; Studier-Keppler 1988); a deviation means NJ failed on an input it provably handles"
     },
     {
       "id": "BP-PHY-003",
