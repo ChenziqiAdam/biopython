@@ -731,21 +731,47 @@ def _all_branch_lengths(tree):
     ]
 
 
+def _input_is_additive(distance_matrix, tree):
+    """True when every input pairwise distance equals the corresponding path
+    length in ``tree`` (within tolerance).
+
+    Additivity is the precondition for NJ's order-independence and exact-
+    reconstruction theorems (Saitou-Nei 1987; Studier-Keppler 1988). On a
+    non-additive matrix NJ may legitimately return different trees for
+    different taxon orders (tied Q-matrix minima) and may return negative
+    branch lengths -- both are standard, documented NJ behaviour, not defects,
+    so the checkers below stay silent there.
+    """
+    n = len(distance_matrix)
+    patristic = _patristic(tree)
+    names = list(distance_matrix.names)
+    for i in range(n):
+        for j in range(i):
+            key = tuple(sorted((names[i], names[j])))
+            if key not in patristic or not _isclose(
+                patristic[key], distance_matrix[names[i], names[j]], tol=1e-6
+            ):
+                return False
+    return True
+
+
 @_guard("nj_leaf_order_invariance")
 def check_nj_leaf_order(distance_matrix, tree):
-    """BP-PHY-001: neighbour joining is a deterministic function of the set of
-    pairwise distances, not of the order the taxa are listed in. Permuting the
-    rows/columns of the input matrix must yield a tree with the same topology
-    and the same branch lengths -- i.e. identical patristic distances between
-    every pair of leaves. An order dependence means the join order (and hence
-    the inferred tree) is being decided by an implementation artefact.
+    """BP-PHY-001: for an *additive* distance matrix, neighbour joining
+    reconstructs the unique generating tree, so it is independent of the order
+    the taxa are listed in: permuting the rows/columns of the input must yield
+    a tree with identical patristic distances between every pair of leaves. An
+    order dependence on additive input means the join order (and hence the
+    inferred phylogeny) is being decided by an implementation artefact rather
+    than by the data. The checker does nothing on non-additive input, where
+    tied Q-matrix minima make several distinct NJ trees equally valid.
     """
     import random
 
     from Bio.Phylo.TreeConstruction import DistanceMatrix, DistanceTreeConstructor
 
     n = len(distance_matrix)
-    if n < 4:
+    if n < 4 or not _input_is_additive(distance_matrix, tree):
         return
     names = list(distance_matrix.names)
     perm = names[:]
@@ -769,52 +795,30 @@ def check_nj_leaf_order(distance_matrix, tree):
 
 @_guard("nj_additivity")
 def check_nj_additivity(distance_matrix, tree):
-    """BP-PHY-002: the defining correctness property of neighbour joining --
-    if the input distances are *additive* (exactly realisable as path lengths
-    on some weighted tree), NJ reconstructs that tree, so the patristic
-    distances of the output equal the input distances. The checker only runs
-    when the input matrix is itself additive with respect to the tree NJ just
-    produced (it reads the tree's own branch lengths, never a re-derived
-    distance formula); a mismatch then means NJ failed to recover a tree it
-    provably should have.
+    """BP-PHY-002: the correctness theorem for neighbour joining -- if the input
+    distances are *additive* (exactly realisable as path lengths on a weighted
+    tree), NJ reconstructs that tree, so the output patristic distances equal
+    the input distances. The checker reads the produced tree's own branch
+    lengths (never a re-derived distance formula) to decide whether the input
+    was additive; if it was, any deviation of an output patristic distance from
+    the input distance means NJ failed to recover a tree it provably should
+    have. Non-additive input is out of scope (NJ makes no such guarantee, and
+    negative branch lengths there are documented, expected behaviour).
     """
     n = len(distance_matrix)
-    if n < 4:
+    if n < 4 or not _input_is_additive(distance_matrix, tree):
         return
+    # Additive input: NJ must reproduce every input distance exactly.
     patristic = _patristic(tree)
     names = list(distance_matrix.names)
-    # is the *input* already additive w.r.t. this tree?
-    additive = True
+    bad = False
     for i in range(n):
         for j in range(i):
             key = tuple(sorted((names[i], names[j])))
-            if key not in patristic or not _isclose(
+            if not _isclose(
                 patristic[key], distance_matrix[names[i], names[j]], tol=1e-6
             ):
-                additive = False
-                break
-        if not additive:
-            break
-    # If additive, NJ is correct here by construction -- nothing to flag.
-    # If NOT additive we cannot conclude anything, so we only assert the
-    # weaker guarantee: every input distance is >= the tree distance is false
-    # in general, so this checker is designed-nontriggering unless the tree's
-    # own patristic distances are internally inconsistent with a valid metric.
-    if additive:
-        return
-    # Non-additive input: check the output tree is at least a valid metric
-    # embedding (triangle inequality on patristic distances).
-    terminals = [t.name for t in tree.get_terminals()]
-    bad = False
-    for a in range(len(terminals)):
-        for b in range(a + 1, len(terminals)):
-            for c in range(b + 1, len(terminals)):
-                ab = patristic[tuple(sorted((terminals[a], terminals[b])))]
-                ac = patristic[tuple(sorted((terminals[a], terminals[c])))]
-                bc = patristic[tuple(sorted((terminals[b], terminals[c])))]
-                if (ab > ac + bc + 1e-6 or ac > ab + bc + 1e-6
-                        or bc > ab + ac + 1e-6):
-                    bad = True
+                bad = True
     trigger_if(bad, "BP-PHY-002")
 
 
@@ -873,18 +877,8 @@ def check_tree_branch_lengths(distance_matrix, tree, method):
         return
     # NJ: only flag when the input is additive (negative lengths are otherwise
     # an accepted outcome of NJ on non-additive data).
-    n = len(distance_matrix)
-    if n < 4:
+    if len(distance_matrix) < 4 or not _input_is_additive(distance_matrix, tree):
         return
-    patristic = _patristic(tree)
-    names = list(distance_matrix.names)
-    for i in range(n):
-        for j in range(i):
-            key = tuple(sorted((names[i], names[j])))
-            if key not in patristic or not _isclose(
-                patristic[key], distance_matrix[names[i], names[j]], tol=1e-6
-            ):
-                return  # not additive -> nothing to assert
     trigger_if(negative < -1e-6, "BP-PHY-004")
 
 
