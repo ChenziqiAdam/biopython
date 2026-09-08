@@ -159,7 +159,9 @@ class ProteinAnalysis:
 
         instability = (10.0 / self.length) * score
         if _scientific_checkers.enabled():
-            _scientific_checkers.check_instability(self.sequence, instability)
+            _scientific_checkers.check_instability_additivity(
+                self.sequence, instability
+            )
         return instability
 
     def flexibility(self):
@@ -323,7 +325,7 @@ class ProteinAnalysis:
         ie_point = IsoelectricPoint.IsoelectricPoint(self.sequence, aa_content)
         point = ie_point.pi()
         if _scientific_checkers.enabled():
-            _scientific_checkers.check_pi(
+            _scientific_checkers.check_pi_charge_neutrality(
                 self.sequence, point, ie_point.charge_at_pH(point)
             )
             _scientific_checkers.check_charge_monotonicity(self.sequence)

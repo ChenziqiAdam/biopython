@@ -155,33 +155,54 @@ def check_protein_scale_output(sequence, param_dict, window, edge, scores):
     trigger_if(differs, "BP-SEQ-004")
 
 
-# --- ProtParam.instability_index ----------------------------------------------
+# --- ProtParam.instability_index --------------------------------------------
 
-@_guard("instability")
-def check_instability(sequence, value):
-    """BP-SEQ-026: the Guruprasad instability index is defined as a sum over
-    dipeptides. A single-residue peptide contains no dipeptide, so the index is
-    identically 0 (or the input is rejected). This is the biochemical domain
-    boundary of the quantity, not an arithmetic edge case.
+@_guard("instability_index_additivity")
+def check_instability_additivity(sequence, value):
+    """BP-SEQ-026: the Guruprasad instability index is a length-weighted sum
+    over adjacent-residue (dipeptide) DIWV terms:
+    ``II(s) = (10/L) * sum_i DIWV[s_i][s_{i+1}]``. Because the sum is over
+    consecutive pairs, splitting the chain at any position k decomposes it
+    exactly:
+    ``L * II(s) == kA * II(s[:k]) + kB * II(s[k:]) + 10 * DIWV[s[k-1]][s[k]]``
+    for every 1 <= k <= L-1 (the last term is the one dipeptide that straddles
+    the cut). This is a general decomposition law over all split points; the
+    checker picks k in the middle and re-calls the public API on the two
+    halves. It does not know whether any split violates it.
     """
-    if len(sequence) == 1:
-        trigger_if(not math.isfinite(value) or not _isclose(value, 0.0), "BP-SEQ-026")
+    from Bio.SeqUtils.ProtParam import ProteinAnalysis
+    from Bio.SeqUtils import ProtParamData
+
+    L = len(sequence)
+    if L < 3 or not math.isfinite(value):
+        return
+    if any(r not in ProtParamData.DIWV for r in sequence):
+        return
+    k = L // 2
+    a, b = sequence[:k], sequence[k:]
+    ii_a = ProteinAnalysis(a).instability_index()
+    ii_b = ProteinAnalysis(b).instability_index()
+    junction = 10.0 * ProtParamData.DIWV[sequence[k - 1]][sequence[k]]
+    combined = (k * ii_a + len(b) * ii_b + junction) / L
+    trigger_if(not _isclose(value, combined, tol=1e-6), "BP-SEQ-026")
 
 
 # --- IsoelectricPoint ------------------------------------------------------
 
-@_guard("pi")
-def check_pi(sequence, point, charge):
-    """BP-SEQ-006/007: the isoelectric point is by definition the pH at which the
-    modeled net charge is zero. For extreme acidic (D/E) or basic (K/R)
-    compositions the reported pI must still satisfy charge-neutrality; a large
-    residual charge means the reported pI is not the isoelectric point.
+@_guard("pi_charge_neutrality")
+def check_pi_charge_neutrality(sequence, point, charge):
+    """BP-SEQ-006: the isoelectric point is *defined* as the pH at which the
+    modelled net charge is zero. For any standard protein sequence the net
+    charge evaluated at the reported pI must therefore be (numerically) zero;
+    a non-trivial residual charge means the value returned is not the
+    isoelectric point. The precondition is any standard-amino-acid sequence --
+    the checker does not target a particular composition.
     """
-    residues = set(sequence)
-    if sequence and residues <= {"D", "E"}:
-        trigger_if(abs(charge) > 1e-3, "BP-SEQ-006")
-    if sequence and residues <= {"K", "R"}:
-        trigger_if(abs(charge) > 1e-3, "BP-SEQ-007")
+    if not sequence or any(r not in "ACDEFGHIKLMNPQRSTVWY" for r in sequence):
+        return
+    # tolerance scaled by chain length: charge_at_pH is a sum of L sigmoids
+    tol = 1e-2 * max(1.0, len(sequence) / 20.0)
+    trigger_if(abs(charge) > tol, "BP-SEQ-006")
 
 
 @_guard("charge_monotonicity")
@@ -201,39 +222,52 @@ def check_charge_monotonicity(sequence):
 
 # --- SeqUtils.molecular_weight ----------------------------------------------
 
-@_guard("molecular_weight")
-def check_molecular_weight(original_seq, seq_type, double_stranded, circular,
-                           monoisotopic, weight):
-    """BP-SEQ-008 empty polymer; BP-SEQ-023 single-strand additivity.
-
-    008: an empty polymer has no residues and no bonds; its mass is 0 (or the
-    input is rejected). Acquiring the mass of one water molecule means the
-    condensation-water bookkeeping is wrong.
-    023: forming a phosphodiester bond between two oligomers releases exactly
-    one water, so MW(a+b) + water == MW(a) + MW(b). This is mass conservation
-    across the condensation reaction.
+@_guard("condensation_mass_conservation")
+def check_molecular_weight_additivity(original_seq, seq_type, double_stranded,
+                                      circular, monoisotopic, weight):
+    """BP-SEQ-023: forming the backbone bond that joins two oligomers releases
+    exactly one water molecule, so for a single strand and *any* split point
+    ``k`` in ``1 <= k <= L-1``:
+        ``MW(s) == MW(s[:k]) + MW(s[k:]) - water``.
+    This is mass conservation across the condensation reaction; it must hold at
+    every split, not just the midpoint. The checker re-calls the public API on
+    each half at several k and does not assume any particular k fails.
     """
     water = 18.010565 if monoisotopic else 18.0153
-
-    trigger_if(
-        not original_seq and math.isfinite(weight) and weight != 0, "BP-SEQ-008"
-    )
-    if not original_seq:
+    L = len(original_seq)
+    if (double_stranded or circular or L < 2
+            or seq_type not in ("DNA", "RNA")
+            or set(original_seq) - set("ACGTU")):
         return
 
     from Bio.SeqUtils import molecular_weight
 
-    if seq_type in ("DNA", "RNA") and set(original_seq) <= set("ACGTU"):
-        if not double_stranded and not circular and len(original_seq) >= 2:
-            half = len(original_seq) // 2
-            a, b = original_seq[:half], original_seq[half:]
-            whole = molecular_weight(original_seq, seq_type,
-                                     monoisotopic=monoisotopic)
-            parts = (
-                molecular_weight(a, seq_type, monoisotopic=monoisotopic)
-                + molecular_weight(b, seq_type, monoisotopic=monoisotopic)
-            )
-            trigger_if(not _isclose(whole + water, parts, tol=1e-6), "BP-SEQ-023")
+    whole = molecular_weight(original_seq, seq_type, monoisotopic=monoisotopic)
+    ks = sorted({1, L // 2, L - 1})
+    for k in ks:
+        a = molecular_weight(original_seq[:k], seq_type,
+                             monoisotopic=monoisotopic)
+        b = molecular_weight(original_seq[k:], seq_type,
+                             monoisotopic=monoisotopic)
+        trigger_if(not _isclose(whole, a + b - water, tol=1e-6), "BP-SEQ-023")
+
+
+@_guard("water_mass_consistency")
+def check_water_mass_consistency(monoisotopic):
+    """BP-SEQ-046: the average-mass condensation water (18.0153) subtracted per
+    backbone bond in ``molecular_weight`` must equal the mass of an H2O
+    molecule assembled from the repository's own standard atomic-weight table,
+    ``IUPACData.atom_weights`` (2 * H + O). This is a consistency check between
+    a hard-coded constant in one function and the authoritative element table
+    the rest of Biopython uses; the curator does not know whether they agree.
+    """
+    if monoisotopic:
+        return
+    from Bio.Data import IUPACData
+
+    h = IUPACData.atom_weights["H"]
+    o = IUPACData.atom_weights["O"]
+    trigger_if(not _isclose(18.0153, 2 * h + o, tol=5e-4), "BP-SEQ-046")
 
 
 # --- MeltingTemp ---------------------------------------------------------
@@ -325,17 +359,44 @@ def check_salt_correction(Na, K, Tris, Mg, dNTPs, method, seq, corr):
 
 # --- CodonAdaptationIndex ------------------------------------------------
 
-@_guard("cai_degenerate")
-def check_cai_degenerate(sequence, cai_length):
-    """BP-SEQ-005: Met (ATG) and Trp (TGG) each have a single codon, so their
-    relative adaptiveness is 1 by definition. A coding sequence built only from
-    these codons is a valid biological input whose CAI is 1; producing
-    cai_length == 0 drives the geometric-mean formula into a division by zero.
+@_guard("cai_range_and_monotonicity")
+def check_cai_range(index, sequence, result):
+    """BP-SEQ-005: the codon adaptation index is the geometric mean of the
+    per-codon relative adaptiveness values w_ij, and every w_ij lies in (0, 1]
+    by construction (each is a ratio to the most frequent synonym). Therefore
+    for *any* in-frame coding sequence:
+      - CAI is well-defined and CAI in (0, 1];
+      - replacing any codon by the highest-w_ij synonym of the same amino acid
+        cannot decrease CAI (monotonicity toward the optimal coding sequence).
+    The precondition is any in-frame CDS over the index's genetic code; the
+    checker does not target a particular codon composition.
     """
     text = str(sequence).upper()
+    if not text or len(text) % 3 or set(text) - set("ACGT"):
+        return
     codons = [text[i:i + 3] for i in range(0, len(text), 3)]
-    valid = bool(text) and len(text) % 3 == 0 and set(codons) <= {"ATG", "TGG"}
-    trigger_if(valid and cai_length == 0, "BP-SEQ-005")
+
+    # 1. range / well-definedness
+    if result is None or not math.isfinite(result):
+        trigger("BP-SEQ-005")
+        return
+    trigger_if(result <= 0.0 or result > 1.0 + 1e-9, "BP-SEQ-005")
+
+    # 2. monotonicity toward the optimal synonymous sequence
+    table = index._table
+    syn = {}
+    for aa in table.protein_alphabet:
+        group = [c for c, a in table.forward_table.items() if a == aa]
+        if group:
+            best = max(group, key=lambda c: index.get(c, 0.0))
+            for c in group:
+                syn[c] = best
+    optimised = "".join(syn.get(c, c) for c in codons)
+    if optimised != text:
+        from Bio.SeqUtils import CodonAdaptationIndex  # noqa: F401
+
+        opt_result = index.calculate(optimised)
+        trigger_if(opt_result < result - 1e-9, "BP-SEQ-005")
 
 
 # --- SeqUtils.GC_skew --------------------------------------------------

@@ -501,9 +501,10 @@ def molecular_weight(
             weight -= water
 
     if _scientific_checkers.enabled():
-        _scientific_checkers.check_molecular_weight(
+        _scientific_checkers.check_molecular_weight_additivity(
             original_seq, seq_type, double_stranded, circular, monoisotopic, weight
         )
+        _scientific_checkers.check_water_mass_consistency(monoisotopic)
         _scientific_checkers.check_rna_dna_mass_ordering(
             original_seq, seq_type, double_stranded, circular, monoisotopic, weight
         )
@@ -672,9 +673,15 @@ class CodonAdaptationIndex(dict):
             else:
                 cai_length += 1
 
-        if _scientific_checkers.enabled():
-            _scientific_checkers.check_cai_degenerate(sequence, cai_length)
-        return exp(cai_value / cai_length)
+        if not _scientific_checkers.enabled():
+            return exp(cai_value / cai_length)
+        try:
+            result = exp(cai_value / cai_length)
+        except Exception:
+            _scientific_checkers.check_cai_range(self, sequence, None)
+            raise
+        _scientific_checkers.check_cai_range(self, sequence, result)
+        return result
 
     def optimize(self, sequence, seq_type="DNA", strict=True):
         """Return a new DNA sequence with preferred codons only.
