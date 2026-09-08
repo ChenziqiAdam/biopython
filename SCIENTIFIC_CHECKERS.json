@@ -53,51 +53,27 @@
     },
     {
       "id": "BP-SEQ-005",
-      "family": "codon_adaptation_degenerate_sequence",
+      "family": "cai_range_and_monotonicity",
       "source": "Bio/SeqUtils/__init__.py",
       "symbol": "CodonAdaptationIndex.calculate",
-      "scientific_quantity": "codon adaptation index",
-      "precondition": "a valid in-frame coding DNA sequence consisting only of ATG and TGG codons",
-      "invariant": "the CAI is finite and equals 1 (both codons have adaptiveness 1)",
-      "observation_point": "before the final exp(cai_value / cai_length)",
-      "alarm": "cai_length == 0 for a valid non-empty in-frame sequence",
-      "rationale": "a defined scientific metric on valid input must produce a number, not a division by zero"
+      "scientific_quantity": "codon adaptation index (Sharp & Li 1987)",
+      "precondition": "any in-frame coding DNA sequence over the index's genetic code (length a multiple of 3, letters ACGT). No restriction on codon composition.",
+      "invariant": "CAI is the geometric mean of per-codon relative adaptiveness values w_ij in (0,1], so CAI is well-defined and lies in (0,1]; and replacing any codon by the highest-w_ij synonym of the same amino acid cannot decrease CAI",
+      "observation_point": "after CodonAdaptationIndex.calculate computes the result (or raises), before returning",
+      "alarm": "the result is undefined/non-finite, or CAI <= 0 or CAI > 1, or the CAI of the synonymously optimised sequence is lower than the CAI of the input (by > 1e-9)",
+      "rationale": "CAI in (0,1] and monotone improvement toward the optimal synonymous sequence are definitional properties of the metric; a violation means the adaptiveness table or the geometric mean is being applied inconsistently"
     },
     {
       "id": "BP-SEQ-006",
-      "family": "isoelectric_point_search_bounds",
+      "family": "isoelectric_point_charge_neutrality",
       "source": "Bio/SeqUtils/IsoelectricPoint.py",
-      "symbol": "IsoelectricPoint.pi",
-      "scientific_quantity": "isoelectric point",
-      "precondition": "a non-empty valid protein sequence composed only of acidic residues (D, E)",
-      "invariant": "the modeled net charge at the reported pI has absolute value <= 1e-3",
-      "observation_point": "in ProteinAnalysis.isoelectric_point, after pi() returns, using charge_at_pH(point)",
-      "alarm": "abs(charge_at_pH(pI)) > 1e-3",
-      "rationale": "the bisection search is hard-bounded to [4.05, 12]; extreme acidic compositions have a true pI below 4.05"
-    },
-    {
-      "id": "BP-SEQ-007",
-      "family": "isoelectric_point_search_bounds",
-      "source": "Bio/SeqUtils/IsoelectricPoint.py",
-      "symbol": "IsoelectricPoint.pi",
-      "scientific_quantity": "isoelectric point",
-      "precondition": "a non-empty valid protein sequence composed only of strongly basic residues (K, R)",
-      "invariant": "the modeled net charge at the reported pI has absolute value <= 1e-3",
-      "observation_point": "same as BP-SEQ-006",
-      "alarm": "abs(charge_at_pH(pI)) > 1e-3",
-      "rationale": "extreme basic compositions have a true pI at or above the upper search bound of 12"
-    },
-    {
-      "id": "BP-SEQ-008",
-      "family": "empty_polymer_mass",
-      "source": "Bio/SeqUtils/__init__.py",
-      "symbol": "molecular_weight",
-      "scientific_quantity": "molecular mass",
-      "precondition": "an empty sequence passed to the public molecular_weight API",
-      "invariant": "an empty polymer is rejected or has zero mass; it must not acquire the mass of one water molecule",
-      "observation_point": "after the mass calculation, before returning weight",
-      "alarm": "an empty input returns a finite non-zero mass",
-      "rationale": "sum([]) - (0 - 1) * water = +water; the end-group correction is applied to a non-existent chain"
+      "symbol": "ProteinAnalysis.isoelectric_point / IsoelectricPoint.pi",
+      "scientific_quantity": "isoelectric point (pI) and net charge at pI",
+      "precondition": "any sequence of standard amino acids (ACDEFGHIKLMNPQRSTVWY). No restriction on composition.",
+      "invariant": "the isoelectric point is by definition the pH at which the modelled net charge is zero, so charge_at_pH(reported_pI) == 0",
+      "observation_point": "after IsoelectricPoint.pi returns, evaluating the model net charge at the returned pH",
+      "alarm": "|charge_at_pH(reported_pI)| exceeds 1e-2 * max(1, L/20)",
+      "rationale": "if the reported pI does not zero the net charge it is not the isoelectric point; the value cannot be used for charge-based separation or 2D-gel prediction"
     },
     {
       "id": "BP-SEQ-011",
@@ -117,7 +93,7 @@
       "source": "Bio/SeqUtils/MeltingTemp.py",
       "symbol": "Tm_GC",
       "scientific_quantity": "GC-content melting temperature",
-      "precondition": "an unambiguous DNA sequence of length >= 4, default value set",
+      "precondition": "an unambiguous DNA sequence of length >= 4 (any value set / salt / mismatch parameters; the comparison endpoints use the same ones)",
       "invariant": "at fixed length, raising %GC does not lower Tm_GC (empirical B > 0)",
       "observation_point": "before returning melting_temp; the checker calls Tm_GC on all-A and all-G sequences of the same length",
       "alarm": "the all-A Tm exceeds this sequence's Tm, or exceeds the all-G Tm, beyond 1e-6",
@@ -129,23 +105,23 @@
       "source": "Bio/SeqUtils/__init__.py",
       "symbol": "molecular_weight",
       "scientific_quantity": "single-strand molecular mass",
-      "precondition": "an unambiguous linear DNA or RNA sequence of length >= 2, double_stranded=False, circular=False",
-      "invariant": "MW(a + b) + water == MW(a) + MW(b) (the shared phosphodiester bond removes one water)",
-      "observation_point": "after the mass calculation; the checker re-calls molecular_weight on the two halves",
-      "alarm": "the concatenated mass plus one water differs from the sum of the parts beyond 1e-6",
+      "precondition": "a single-stranded, non-circular DNA or RNA sequence of length >= 2 over ACGTU; checked at k = 1, L//2 and L-1",
+      "invariant": "forming the backbone bond that joins two oligomers releases exactly one water, so for a single strand and any split point k in 1..L-1: MW(s) == MW(s[:k]) + MW(s[k:]) - water",
+      "observation_point": "after molecular_weight returns; the checker re-calls it on each half",
+      "alarm": "|MW(s) - (MW(s[:k]) + MW(s[k:]) - water)| > 1e-6 for any tested split point k",
       "rationale": "mass is additive over concatenation up to the condensation water at the new bond"
     },
     {
       "id": "BP-SEQ-026",
-      "family": "instability_degenerate",
+      "family": "instability_index_additivity",
       "source": "Bio/SeqUtils/ProtParam.py",
       "symbol": "ProteinAnalysis.instability_index",
-      "scientific_quantity": "instability index (Guruprasad 1990)",
-      "precondition": "a single-residue protein sequence",
-      "invariant": "with no dipeptide the instability index is 0 (or the input is rejected)",
-      "observation_point": "before returning the instability index",
-      "alarm": "a length-1 sequence yields a non-finite or non-zero index",
-      "rationale": "the index is a sum over dipeptide values; an empty sum is zero"
+      "scientific_quantity": "Guruprasad instability index",
+      "precondition": "any peptide of standard amino acids with length >= 3 (all DIWV dipeptide keys present); checked at the midpoint split",
+      "invariant": "the instability index is a length-weighted sum of consecutive-residue DIWV terms, so L*II(s) == kA*II(s[:k]) + kB*II(s[k:]) + 10*DIWV[s[k-1]][s[k]] for every split point k",
+      "observation_point": "after instability_index computes the value; the checker re-calls the API on the two halves",
+      "alarm": "|II(s) - (kA*II(s[:k]) + kB*II(s[k:]) + 10*DIWV[s[k-1]][s[k]]) / L| > 1e-6",
+      "rationale": "the dipeptide decomposition is a general additivity law for the index; a violation means the windowed sum or the length normalisation is wrong"
     },
     {
       "id": "BP-SEQ-028",
@@ -494,6 +470,18 @@
       "observation_point": "after _pwm.calculate fills the score array, before calculate() returns",
       "alarm": "|forward score - reverse-complement score| > 1e-3 (relative)",
       "rationale": "a binding site can occur on either strand; the forward and reverse-complement scorings describe the same physical binding event, so an asymmetry biases every both-strands genome scan by strand"
+    },
+    {
+      "id": "BP-SEQ-046",
+      "family": "water_mass_constant_consistency",
+      "source": "Bio/SeqUtils/__init__.py",
+      "symbol": "molecular_weight",
+      "scientific_quantity": "condensation-water molecular mass",
+      "precondition": "the average-mass path of molecular_weight (monoisotopic=False); any call",
+      "invariant": "the hard-coded average condensation water 18.0153 equals 2*H + O from IUPACData.atom_weights (the standard atomic-weight table used elsewhere in Biopython)",
+      "observation_point": "entry of molecular_weight, before the residue sum",
+      "alarm": "|18.0153 - (2*atom_weights[\"H\"] + atom_weights[\"O\"])| > 5e-4",
+      "rationale": "a formula constant that disagrees with the module's own element table silently biases every molecular weight by a fixed offset per residue"
     }
   ]
 }

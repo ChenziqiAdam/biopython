@@ -1,6 +1,6 @@
 # SciBench scientific-sanitizer pilot
 
-This branch instruments 41 curated scientific invariants (38 root-cause
+This branch instruments 40 curated scientific invariants (38 root-cause
 families) over `Bio.SeqUtils`, the `Bio.PDB` geometry primitives
 (`vectors`, `qcprot`, `Superimposer`), `Bio.Align.PairwiseAligner`,
 `Bio.Phylo.TreeConstruction` (neighbour joining / UPGMA), and
