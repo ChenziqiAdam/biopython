@@ -1,8 +1,10 @@
 # SciBench scientific-sanitizer pilot
 
-This branch instruments 34 curated scientific invariants (31 root-cause
+This branch instruments 41 curated scientific invariants (38 root-cause
 families) over `Bio.SeqUtils`, the `Bio.PDB` geometry primitives
-(`vectors`, `qcprot`, `Superimposer`), and `Bio.Align.PairwiseAligner`. Every
+(`vectors`, `qcprot`, `Superimposer`), `Bio.Align.PairwiseAligner`,
+`Bio.Phylo.TreeConstruction` (neighbour joining / UPGMA), and
+`Bio.motifs` (position-specific scoring matrices). Every
 invariant is a physical, chemical, geometric, thermodynamic, or algebraic
 symmetry law whose violation has a domain consequence -- pure arithmetic
 identities, range checks, and generic software-correctness assertions are

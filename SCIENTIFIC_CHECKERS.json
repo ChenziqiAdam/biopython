@@ -410,6 +410,90 @@
       "observation_point": "after PairwiseAligner.score computes the score, before it returns",
       "alarm": "|score_with(M^T) - score_with(M)| > 1e-9 (relative)",
       "rationale": "for a symmetric substitution model the matrix transpose is the identity operation; a difference means the aligner indexes the matrix as M[a][b] where it should use M[b][a] (or vice versa)"
+    },
+    {
+      "id": "BP-PHY-001",
+      "family": "nj_leaf_order_invariance",
+      "source": "Bio/Phylo/TreeConstruction.py",
+      "symbol": "DistanceTreeConstructor.nj",
+      "scientific_quantity": "neighbour-joining tree (topology + branch lengths)",
+      "precondition": "a DistanceMatrix with >= 4 taxa produced through the public API; the NJ main branch (n>2)",
+      "invariant": "permuting the rows/columns of the input matrix yields a tree with identical patristic distances between every pair of leaves",
+      "observation_point": "after nj() builds the tree, before returning",
+      "alarm": "any leaf-pair patristic distance differs by > 1e-6 between the tree and the tree built from a row/col-permuted copy of the same matrix",
+      "rationale": "NJ is a function of the multiset of pairwise distances, not taxon order; an order dependence means the join sequence is decided by an implementation artefact and the inferred phylogeny is not well-defined"
+    },
+    {
+      "id": "BP-PHY-002",
+      "family": "nj_additivity",
+      "source": "Bio/Phylo/TreeConstruction.py",
+      "symbol": "DistanceTreeConstructor.nj",
+      "scientific_quantity": "reconstructed patristic distances",
+      "precondition": "NJ output on >= 4 taxa; checker asserts only when the input matrix is additive w.r.t. the produced tree (else it asserts the triangle inequality on the output patristic distances)",
+      "invariant": "if the input distances are additive, NJ reconstructs the generating tree exactly (output patristic distances = input distances); the output patristic distances always satisfy the triangle inequality",
+      "observation_point": "after nj() builds the tree, before returning",
+      "alarm": "additive input and output patristic distance != input distance; or a patristic triangle inequality violation > 1e-6",
+      "rationale": "exact reconstruction on additive data is the correctness theorem for NJ; a metric-violating output tree cannot embed in any tree metric"
+    },
+    {
+      "id": "BP-PHY-003",
+      "family": "upgma_ultrametric",
+      "source": "Bio/Phylo/TreeConstruction.py",
+      "symbol": "DistanceTreeConstructor.upgma",
+      "scientific_quantity": "UPGMA dendrogram (rooted, clock-like)",
+      "precondition": "a DistanceMatrix with >= 3 taxa; UPGMA output",
+      "invariant": "the tree is ultrametric: all leaves equidistant from the root, and for any three leaves the two largest pairwise patristic distances are equal (three-point condition)",
+      "observation_point": "after upgma() builds the tree, before returning",
+      "alarm": "a root-to-leaf depth differs by > 1e-6, or the two largest of a leaf triple's pairwise patristic distances differ by > 1e-6",
+      "rationale": "UPGMA assumes a molecular clock; a non-ultrametric result cannot be read as a clock-like divergence history, which is the modelling premise of the method"
+    },
+    {
+      "id": "BP-PHY-004",
+      "family": "tree_branch_length_nonnegative",
+      "source": "Bio/Phylo/TreeConstruction.py",
+      "symbol": "DistanceTreeConstructor.nj / DistanceTreeConstructor.upgma",
+      "scientific_quantity": "estimated branch length (expected substitutions per site)",
+      "precondition": "UPGMA on any valid distance matrix; or NJ when the input matrix is additive",
+      "invariant": "every estimated branch length is >= 0",
+      "observation_point": "after the tree is built, before returning",
+      "alarm": "min branch length < -1e-6",
+      "rationale": "a negative branch length is negative evolutionary change; it has no biological meaning and corrupts every length-weighted downstream analysis (patristic distance, rate and date estimation, ancestral reconstruction)"
+    },
+    {
+      "id": "BP-MTF-001",
+      "family": "pssm_score_additivity",
+      "source": "Bio/motifs/matrix.py",
+      "symbol": "PositionSpecificScoringMatrix.calculate",
+      "scientific_quantity": "position-specific log-odds site score",
+      "precondition": "a DNA PSSM (ACGT); a sequence at least as long as the motif with only ACGT; score at offset 0",
+      "invariant": "the site score equals the sum of the per-position log-odds entries pssm[seq[i]][i]",
+      "observation_point": "after _pwm.calculate fills the score array, before calculate() returns",
+      "alarm": "|C-computed score - column-wise sum| > 1e-3 (relative)",
+      "rationale": "positional independence (a sum of per-column log-odds) is the defining assumption of the PSSM model; the C routine and a direct sum are independent implementations of it and a mismatch means the reported score is not the model log-odds"
+    },
+    {
+      "id": "BP-MTF-002",
+      "family": "pssm_score_bounds",
+      "source": "Bio/motifs/matrix.py",
+      "symbol": "PositionSpecificScoringMatrix.calculate",
+      "scientific_quantity": "position-specific log-odds site score",
+      "precondition": "a DNA PSSM; any ACGT query sequence; pssm.min and pssm.max finite",
+      "invariant": "every site score lies in [pssm.min, pssm.max]",
+      "observation_point": "after _pwm.calculate fills the score array, before calculate() returns",
+      "alarm": "a returned score is < pssm.min - 1e-6 or > pssm.max + 1e-6",
+      "rationale": "pssm.max is the consensus score and pssm.min the anticonsensus score; threshold-based motif search and score-to-p-value mapping rely on these bounds, so a score outside them cannot be placed on the motif's score distribution"
+    },
+    {
+      "id": "BP-MTF-003",
+      "family": "pssm_reverse_complement_symmetry",
+      "source": "Bio/motifs/matrix.py",
+      "symbol": "PositionSpecificScoringMatrix.calculate",
+      "scientific_quantity": "position-specific log-odds site score",
+      "precondition": "a DNA PSSM; a query sequence exactly the motif length with only ACGT",
+      "invariant": "score(S) with the PSSM equals score(reverse-complement(S)) with reverse_complement(PSSM)",
+      "observation_point": "after _pwm.calculate fills the score array, before calculate() returns",
+      "alarm": "|forward score - reverse-complement score| > 1e-3 (relative)",
+      "rationale": "a binding site can occur on either strand; the forward and reverse-complement scorings describe the same physical binding event, so an asymmetry biases every both-strands genome scan by strand"
     }
   ]
 }
