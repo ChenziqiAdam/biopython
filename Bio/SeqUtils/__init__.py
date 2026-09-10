@@ -638,7 +638,15 @@ class CodonAdaptationIndex(dict):
                 self[codon] = counts[codon] / denominator
 
     def calculate(self, sequence):
-        """Calculate and return the CAI (float) for the provided DNA sequence."""
+        """Calculate and return the CAI (float) for the provided DNA sequence.
+
+        The ATG (Met) and TGG (Trp) codons, whose relative adaptiveness is
+        always one, are excluded from the calculation, as are stop codons.
+        If the sequence contains no other codons - for example an empty
+        sequence, or a coding sequence made up only of ATG and TGG - the
+        geometric mean is taken over zero terms and a ``ZeroDivisionError``
+        is raised.
+        """
         cai_value, cai_length = 0, 0
 
         try:
