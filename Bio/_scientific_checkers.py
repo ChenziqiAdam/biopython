@@ -185,7 +185,8 @@ def check_instability_additivity(sequence, value):
     ii_b = ProteinAnalysis(b).instability_index()
     junction = 10.0 * ProtParamData.DIWV[sequence[k - 1]][sequence[k]]
     combined = (k * ii_a + len(b) * ii_b + junction) / L
-    trigger_if(not _isclose(value, combined, tol=1e-6), "BP-SEQ-026")
+    tol = 1e-9 * max(1.0, abs(value), abs(combined))
+    trigger_if(not _isclose(value, combined, tol=tol), "BP-SEQ-026")
 
 
 # --- IsoelectricPoint ------------------------------------------------------
@@ -250,7 +251,10 @@ def check_molecular_weight_additivity(original_seq, seq_type, double_stranded,
                              monoisotopic=monoisotopic)
         b = molecular_weight(original_seq[k:], seq_type,
                              monoisotopic=monoisotopic)
-        trigger_if(not _isclose(whole, a + b - water, tol=1e-6), "BP-SEQ-023")
+        # relative tolerance: MW is O(1e2..1e4), float64 sum rounding over a
+        # long strand is ~1e-12 relative (methodology 8.3)
+        tol = 1e-9 * max(1.0, abs(whole))
+        trigger_if(not _isclose(whole, a + b - water, tol=tol), "BP-SEQ-023")
 
 
 @_guard("water_mass_consistency")
@@ -303,11 +307,13 @@ def check_tm_gc_monotonicity(seq, temperature, valueset, userset, Na, K, Tris,
               dNTPs=dNTPs, saltcorr=saltcorr, mismatch=mismatch)
     tm_lower = Tm_GC("A" * len(text), **kw)
     tm_higher = Tm_GC("G" * len(text), **kw)
+    # slack scales with the temperature magnitude (methodology 8.3)
+    slack = 1e-9 * max(1.0, abs(temperature), abs(tm_lower), abs(tm_higher))
     trigger_if(
-        tm_lower - temperature > 1e-6 or temperature - tm_higher > 1e-6,
+        tm_lower - temperature > slack or temperature - tm_higher > slack,
         "BP-SEQ-019",
     )
-    trigger_if(tm_lower - tm_higher > 1e-6, "BP-SEQ-019")
+    trigger_if(tm_lower - tm_higher > slack, "BP-SEQ-019")
 
 
 @_guard("tm_nn_revcomp")
@@ -334,7 +340,8 @@ def check_tm_nn_revcomp(original_seq, c_seq, shift, selfcomp, nn_table, saltcorr
     rc = str(Seq(text).reverse_complement())
     rc_temp = Tm_NN(rc, saltcorr=saltcorr, Na=Na, K=K, Tris=Tris, Mg=Mg,
                     dNTPs=dNTPs, dnac1=dnac1, dnac2=dnac2)
-    trigger_if(not _isclose(rc_temp, temperature, tol=1e-6), "BP-SEQ-028")
+    tol = 1e-9 * max(1.0, abs(temperature), abs(rc_temp))
+    trigger_if(not _isclose(rc_temp, temperature, tol=tol), "BP-SEQ-028")
 
 
 @_guard("tm_nn_salt")
@@ -358,9 +365,10 @@ def check_tm_nn_salt(original_seq, c_seq, shift, selfcomp, saltcorr, Na, K, Tris
     lower = Tm_NN(text, saltcorr=saltcorr, Na=Na / 2.0, dnac1=dnac1, dnac2=dnac2)
     higher = Tm_NN(text, saltcorr=saltcorr, Na=Na * 2.0, dnac1=dnac1,
                    dnac2=dnac2)
-    trigger_if(lower - temperature > 1e-6 or temperature - higher > 1e-6,
+    slack = 1e-9 * max(1.0, abs(temperature), abs(lower), abs(higher))
+    trigger_if(lower - temperature > slack or temperature - higher > slack,
                "BP-SEQ-029")
-    trigger_if(lower - higher > 1e-6, "BP-SEQ-029")
+    trigger_if(lower - higher > slack, "BP-SEQ-029")
 
 
 @_guard("salt_correction_monotonicity")
@@ -459,7 +467,8 @@ def check_protein_molecular_weight(sequence, monoisotopic, weight):
     reversed_weight = ProteinAnalysis(
         sequence[::-1], monoisotopic=monoisotopic
     ).molecular_weight()
-    trigger_if(not _isclose(weight, reversed_weight, tol=1e-6), "BP-SEQ-036")
+    tol = 1e-9 * max(1.0, abs(weight), abs(reversed_weight))
+    trigger_if(not _isclose(weight, reversed_weight, tol=tol), "BP-SEQ-036")
 
 
 # --- SeqUtils.molecular_weight: RNA vs DNA ------------------------------
@@ -853,6 +862,24 @@ def _all_branch_lengths(tree):
     ]
 
 
+def _matrix_scale(distance_matrix):
+    """Largest finite pairwise distance in the matrix, floored at 1.0.
+
+    Patristic-distance comparisons must scale their tolerance with this
+    (methodology 8.3): a fixed 1e-6 absolute tolerance is ~1e-10 relative on
+    a matrix with entries ~1e4, which floating-point tree reconstruction can
+    reach, so an additive large-magnitude matrix would trip the checker.
+    """
+    names = list(distance_matrix.names)
+    vals = [
+        abs(float(distance_matrix[names[i], names[j]]))
+        for i in range(len(names))
+        for j in range(i)
+    ]
+    vals = [v for v in vals if math.isfinite(v)]
+    return max([1.0, *vals])
+
+
 def _input_is_additive(distance_matrix, tree=None):
     """True when the input distance matrix is additive: it is exactly
     realisable on some tree with **all-non-negative** branch lengths.
@@ -949,7 +976,8 @@ def check_nj_leaf_order(distance_matrix, tree):
     if set(d0) != set(d1):
         trigger("BP-PHY-001")
         return
-    differs = any(not _isclose(d0[k], d1[k], tol=1e-6) for k in d0)
+    tol = 1e-9 * _matrix_scale(distance_matrix)
+    differs = any(not _isclose(d0[k], d1[k], tol=tol) for k in d0)
     trigger_if(differs, "BP-PHY-001")
 
 
@@ -971,12 +999,13 @@ def check_nj_additivity(distance_matrix, tree):
     # Additive input: NJ must reproduce every input distance exactly.
     patristic = _patristic(tree)
     names = list(distance_matrix.names)
+    tol = 1e-9 * _matrix_scale(distance_matrix)
     bad = False
     for i in range(n):
         for j in range(i):
             key = tuple(sorted((names[i], names[j])))
             if not _isclose(
-                patristic[key], distance_matrix[names[i], names[j]], tol=1e-6
+                patristic[key], distance_matrix[names[i], names[j]], tol=tol
             ):
                 bad = True
     trigger_if(bad, "BP-PHY-002")
@@ -993,6 +1022,9 @@ def check_upgma_ultrametric(distance_matrix, tree):
     """
     if len(distance_matrix) < 3:
         return
+    # Tolerance scales with the input distance magnitude (methodology 8.3):
+    # a fixed 1e-6 is far too tight on a matrix with entries ~1e4.
+    tol = 1e-9 * _matrix_scale(distance_matrix)
     terminals = tree.get_terminals()
     root = tree.root
     depths = tree.depths()
@@ -1001,7 +1033,7 @@ def check_upgma_ultrametric(distance_matrix, tree):
     if leaf_depths:
         d0 = leaf_depths[0]
         trigger_if(
-            any(not _isclose(d, d0, tol=1e-6) for d in leaf_depths),
+            any(not _isclose(d, d0, tol=tol) for d in leaf_depths),
             "BP-PHY-003",
         )
     # three-point condition
@@ -1015,7 +1047,7 @@ def check_upgma_ultrametric(distance_matrix, tree):
                     patristic[tuple(sorted((names[a], names[c])))],
                     patristic[tuple(sorted((names[b], names[c])))],
                 ])
-                trigger_if(not _isclose(trio[1], trio[2], tol=1e-6),
+                trigger_if(not _isclose(trio[1], trio[2], tol=tol),
                            "BP-PHY-003")
 
 
