@@ -55,7 +55,21 @@ def trigger_if(condition, checker_id):
 
 
 def _isclose(a, b, tol=_TOL):
+    """Relative+absolute closeness. ``tol`` is used as BOTH rel_tol and
+    abs_tol, so it is only meaningful for ``tol`` well below 1 -- a fixed
+    round-off tolerance. For a magnitude-scaled tolerance (which can exceed 1)
+    use ``_within`` instead: passing a large value here as ``rel_tol`` would
+    make almost anything compare equal.
+    """
     return math.isclose(a, b, rel_tol=tol, abs_tol=tol)
+
+
+def _within(a, b, atol):
+    """True when ``a`` and ``b`` differ by at most the absolute tolerance
+    ``atol``. Use this (not ``_isclose``) whenever ``atol`` is derived from the
+    magnitude of the compared quantities (methodology 8.3) and may be >= 1.
+    """
+    return abs(float(a) - float(b)) <= atol
 
 
 def _guard(checker_id):
@@ -186,7 +200,7 @@ def check_instability_additivity(sequence, value):
     junction = 10.0 * ProtParamData.DIWV[sequence[k - 1]][sequence[k]]
     combined = (k * ii_a + len(b) * ii_b + junction) / L
     tol = 1e-9 * max(1.0, abs(value), abs(combined))
-    trigger_if(not _isclose(value, combined, tol=tol), "BP-SEQ-026")
+    trigger_if(not _within(value, combined, tol), "BP-SEQ-026")
 
 
 # --- IsoelectricPoint ------------------------------------------------------
@@ -254,7 +268,7 @@ def check_molecular_weight_additivity(original_seq, seq_type, double_stranded,
         # relative tolerance: MW is O(1e2..1e4), float64 sum rounding over a
         # long strand is ~1e-12 relative (methodology 8.3)
         tol = 1e-9 * max(1.0, abs(whole))
-        trigger_if(not _isclose(whole, a + b - water, tol=tol), "BP-SEQ-023")
+        trigger_if(not _within(whole, a + b - water, tol), "BP-SEQ-023")
 
 
 @_guard("water_mass_consistency")
@@ -341,7 +355,7 @@ def check_tm_nn_revcomp(original_seq, c_seq, shift, selfcomp, nn_table, saltcorr
     rc_temp = Tm_NN(rc, saltcorr=saltcorr, Na=Na, K=K, Tris=Tris, Mg=Mg,
                     dNTPs=dNTPs, dnac1=dnac1, dnac2=dnac2)
     tol = 1e-9 * max(1.0, abs(temperature), abs(rc_temp))
-    trigger_if(not _isclose(rc_temp, temperature, tol=tol), "BP-SEQ-028")
+    trigger_if(not _within(rc_temp, temperature, tol), "BP-SEQ-028")
 
 
 @_guard("tm_nn_salt")
@@ -468,7 +482,7 @@ def check_protein_molecular_weight(sequence, monoisotopic, weight):
         sequence[::-1], monoisotopic=monoisotopic
     ).molecular_weight()
     tol = 1e-9 * max(1.0, abs(weight), abs(reversed_weight))
-    trigger_if(not _isclose(weight, reversed_weight, tol=tol), "BP-SEQ-036")
+    trigger_if(not _within(weight, reversed_weight, tol), "BP-SEQ-036")
 
 
 # --- SeqUtils.molecular_weight: RNA vs DNA ------------------------------
@@ -581,8 +595,30 @@ def check_calc_dihedral(v1, v2, v3, v4, angle):
 
     from Bio.PDB.vectors import calc_dihedral, Vector
 
+    import numpy as _np
+
     arrays = [v1.get_array(), v2.get_array(), v3.get_array(), v4.get_array()]
-    if _points_well_separated(arrays):
+    # The dihedral is well defined only when neither the (1,2,3) nor the
+    # (2,3,4) triple is collinear (each defines a plane whose normal enters the
+    # angle). And near |angle| == pi the value sits on the atan2 branch cut, so
+    # a proper rigid motion can legitimately return -pi instead of +pi for the
+    # identical geometry -- BP-PDB-007 already excludes this; BP-PDB-006 must
+    # too. Both are limitations of the probe / the angle's parameterisation,
+    # not violations of Euclidean invariance or chirality.
+    def _triple_ok(a, b, c):
+        n = _np.cross(b - a, c - b)
+        scale = max(_np.linalg.norm(b - a), _np.linalg.norm(c - b), 1.0)
+        return float(_np.linalg.norm(n)) > 1e-9 * scale * scale
+
+    a0, a1, a2, a3 = (_np.asarray(x, dtype=float) for x in arrays)
+    proper_dihedral = (
+        _points_well_separated(arrays)
+        and _triple_ok(a0, a1, a2)
+        and _triple_ok(a1, a2, a3)
+        and not _isclose(abs(angle), _m.pi, tol=1e-7)
+    )
+
+    if proper_dihedral:
         p = _rigid_transform(arrays)
         moved = calc_dihedral(
             Vector(p[0]), Vector(p[1]), Vector(p[2]), Vector(p[3])
@@ -595,8 +631,8 @@ def check_calc_dihedral(v1, v2, v3, v4, angle):
         return Vector(a)
 
     mirrored = calc_dihedral(mirror(v1), mirror(v2), mirror(v3), mirror(v4))
-    trigger_if(not _isclose(angle, -mirrored, tol=1e-7)
-               and not _isclose(abs(angle), _m.pi, tol=1e-7),
+    trigger_if(proper_dihedral
+               and not _isclose(angle, -mirrored, tol=1e-7),
                "BP-PDB-007")
 
 
@@ -648,16 +684,24 @@ def check_qcp(reference_coords, coords, rms):
     if ref.shape != mov.shape or ref.shape[0] < 3:
         return
 
+    # RMSD is O(coordinate magnitude); the absolute tolerance scales with it
+    # (methodology 8.3). Compared directly, NOT via _isclose -- _isclose would
+    # take this value as a relative tolerance and a large tol would mask any
+    # discrepancy. This still catches the collinear-reference QCP failure by a
+    # wide margin (that returns an RMSD ~1e10 x the coordinate scale).
+    coord_scale = float(max(np.abs(ref).max(), np.abs(mov).max(), 1.0))
+    tol = 1e-6 * coord_scale
+
     moved = np.asarray(_rigid_transform(list(mov)))
     sup = QCPSuperimposer()
     sup.set(ref, moved)
     sup.run()
-    trigger_if(not _isclose(sup.get_rms(), rms, tol=1e-6), "BP-PDB-015")
+    trigger_if(abs(sup.get_rms() - rms) > tol, "BP-PDB-015")
 
     swapped = QCPSuperimposer()
     swapped.set(mov, ref)
     swapped.run()
-    trigger_if(not _isclose(swapped.get_rms(), rms, tol=1e-6), "BP-PDB-015")
+    trigger_if(abs(swapped.get_rms() - rms) > tol, "BP-PDB-015")
 
 
 # ======================================================================
@@ -696,16 +740,29 @@ def check_superimposer(fixed_coord, moving_coord, rot, tran, rms):
         s.run()
         return float(s.get_rms())
 
-    moved = np.asarray(_rigid_transform(list(mov)))
-    trigger_if(abs(_fit(ref, moved) - rms) > 1e-6, "BP-SUP-002")
+    # All four RMSD invariants below compare two least-squares RMSD values, an
+    # O(coordinate-magnitude) quantity. SVD superposition round-off is ~1 ULP
+    # relative (~2e-16) at every scale, so the tolerance must scale with the
+    # magnitude (methodology 8.3), NOT be a fixed 1e-6 / 1e-4 absolute -- those
+    # overflow above coordinate scale ~1e10 while the law still holds exactly.
+    coord_scale = float(max(np.abs(ref).max(), np.abs(mov).max(), 1.0))
 
-    trigger_if(abs(_fit(mov, ref) - rms) > 1e-6 * max(1.0, abs(rms)), "BP-SUP-003")
+    def _rms_tol(*values):
+        return 1e-9 * max(1.0, coord_scale, *(abs(v) for v in values))
+
+    moved = np.asarray(_rigid_transform(list(mov)))
+    fit_moved = _fit(ref, moved)
+    trigger_if(abs(fit_moved - rms) > _rms_tol(rms, fit_moved), "BP-SUP-002")
+
+    fit_swapped = _fit(mov, ref)
+    trigger_if(abs(fit_swapped - rms) > _rms_tol(rms, fit_swapped), "BP-SUP-003")
 
     exact = np.asarray(_rigid_transform(list(ref)))
-    trigger_if(_fit(ref, exact) > 1e-4, "BP-SUP-004")
+    trigger_if(_fit(ref, exact) > _rms_tol(), "BP-SUP-004")
 
     perm = np.random.RandomState(0).permutation(ref.shape[0])
-    trigger_if(abs(_fit(ref[perm], mov[perm]) - rms) > 1e-6, "BP-SUP-007")
+    fit_perm = _fit(ref[perm], mov[perm])
+    trigger_if(abs(fit_perm - rms) > _rms_tol(rms, fit_perm), "BP-SUP-007")
 
 
 # ======================================================================
@@ -740,6 +797,49 @@ def _clone_aligner(aligner):
     clone = PairwiseAligner()
     clone.__setstate__(aligner.__getstate__())
     return clone
+
+
+def _scores_above_epsilon(aligner):
+    """True when every nonzero term of the scoring scheme is safely larger than
+    the aligner's ``epsilon`` (its documented traceback roundoff tolerance,
+    default 1e-6).
+
+    ``score()`` uses a pure score-only DP; ``align()`` uses a traceback whose
+    ``SELECT_TRACE`` macros compare cells with ``+/- epsilon`` slack. When the
+    per-column scores are themselves below ``epsilon``, the traceback
+    legitimately treats distinct alignments as tied and the two paths can
+    report different optima -- that is the documented behaviour of the
+    ``epsilon`` parameter, not a defect. A checker comparing the two paths, or
+    re-running ``score()``, must exclude such schemes.
+    """
+    import numpy as np
+
+    try:
+        eps = float(aligner.epsilon)
+    except Exception:
+        eps = 1e-6
+    terms = []
+    for name in (
+        "match_score", "mismatch_score",
+        "open_internal_insertion_score", "extend_internal_insertion_score",
+        "open_internal_deletion_score", "extend_internal_deletion_score",
+        "open_left_insertion_score", "extend_left_insertion_score",
+        "open_right_insertion_score", "extend_right_insertion_score",
+        "open_left_deletion_score", "extend_left_deletion_score",
+        "open_right_deletion_score", "extend_right_deletion_score",
+    ):
+        try:
+            terms.append(abs(float(getattr(aligner, name))))
+        except Exception:
+            pass
+    matrix = aligner.substitution_matrix
+    if matrix is not None:
+        arr = np.abs(np.asarray(matrix, dtype=float))
+        terms.extend(arr[np.isfinite(arr)].tolist())
+    nonzero = [t for t in terms if t > 0.0]
+    if not nonzero:
+        return False
+    return min(nonzero) > 1e3 * eps
 
 
 def _symmetric_scoring(aligner):
@@ -781,7 +881,7 @@ def check_aligner_score(aligner, seqA, seqB, score):
     a, b = _seq_text(seqA), _seq_text(seqB)
     if a is None or b is None or not a or not b:
         return
-    if not _symmetric_scoring(aligner):
+    if not _symmetric_scoring(aligner) or not _scores_above_epsilon(aligner):
         return
 
     clone = _clone_aligner(aligner)
@@ -828,6 +928,10 @@ def check_aligner_align_vs_score(aligner, seqA, seqB, align_score):
     """
     a, b = _seq_text(seqA), _seq_text(seqB)
     if a is None or b is None or not a or not b:
+        return
+    if not _scores_above_epsilon(aligner):
+        # scores below the aligner's traceback epsilon: score() and align()
+        # legitimately diverge (documented behaviour of `epsilon`), not a bug.
         return
     clone = _clone_aligner(aligner)
     trigger_if(not _isclose(float(clone.score(a, b)), float(align_score), tol=1e-9),
@@ -977,7 +1081,7 @@ def check_nj_leaf_order(distance_matrix, tree):
         trigger("BP-PHY-001")
         return
     tol = 1e-9 * _matrix_scale(distance_matrix)
-    differs = any(not _isclose(d0[k], d1[k], tol=tol) for k in d0)
+    differs = any(not _within(d0[k], d1[k], tol) for k in d0)
     trigger_if(differs, "BP-PHY-001")
 
 
@@ -1004,8 +1108,8 @@ def check_nj_additivity(distance_matrix, tree):
     for i in range(n):
         for j in range(i):
             key = tuple(sorted((names[i], names[j])))
-            if not _isclose(
-                patristic[key], distance_matrix[names[i], names[j]], tol=tol
+            if not _within(
+                patristic[key], distance_matrix[names[i], names[j]], tol
             ):
                 bad = True
     trigger_if(bad, "BP-PHY-002")
@@ -1033,7 +1137,7 @@ def check_upgma_ultrametric(distance_matrix, tree):
     if leaf_depths:
         d0 = leaf_depths[0]
         trigger_if(
-            any(not _isclose(d, d0, tol=tol) for d in leaf_depths),
+            any(not _within(d, d0, tol) for d in leaf_depths),
             "BP-PHY-003",
         )
     # three-point condition
@@ -1047,7 +1151,7 @@ def check_upgma_ultrametric(distance_matrix, tree):
                     patristic[tuple(sorted((names[a], names[c])))],
                     patristic[tuple(sorted((names[b], names[c])))],
                 ])
-                trigger_if(not _isclose(trio[1], trio[2], tol=tol),
+                trigger_if(not _within(trio[1], trio[2], tol),
                            "BP-PHY-003")
 
 
