@@ -653,7 +653,7 @@ class CodonAdaptationIndex(dict):
         Traceback (most recent call last):
           ...
         ZeroDivisionError: division by zero
-        
+
         """
         cai_value, cai_length = 0, 0
 
