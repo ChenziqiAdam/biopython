@@ -312,11 +312,16 @@ def check_tm_gc_monotonicity(seq, temperature, valueset, userset, Na, K, Tris,
 
 @_guard("tm_nn_revcomp")
 def check_tm_nn_revcomp(original_seq, c_seq, shift, selfcomp, nn_table, saltcorr,
-                        Na, K, Tris, Mg, dNTPs, temperature):
+                        Na, K, Tris, Mg, dNTPs, dnac1, dnac2, temperature):
     """BP-SEQ-028: a DNA/DNA duplex and its reverse complement are the same
     physical molecule read from the other strand, so the nearest-neighbor
     melting temperature is invariant under reverse complementation of the
     primer (all other parameters held fixed).
+
+    The re-call forwards every Tm_NN argument that changes the result,
+    including the strand concentrations dnac1/dnac2 (methodology 8.1); a
+    partial forward would compare the caller's Tm against a default-dnac Tm
+    and fire spuriously.
     """
     if c_seq is not None or shift or selfcomp or nn_table is not None:
         return
@@ -328,15 +333,19 @@ def check_tm_nn_revcomp(original_seq, c_seq, shift, selfcomp, nn_table, saltcorr
         return
     rc = str(Seq(text).reverse_complement())
     rc_temp = Tm_NN(rc, saltcorr=saltcorr, Na=Na, K=K, Tris=Tris, Mg=Mg,
-                    dNTPs=dNTPs)
+                    dNTPs=dNTPs, dnac1=dnac1, dnac2=dnac2)
     trigger_if(not _isclose(rc_temp, temperature, tol=1e-6), "BP-SEQ-028")
 
 
 @_guard("tm_nn_salt")
 def check_tm_nn_salt(original_seq, c_seq, shift, selfcomp, saltcorr, Na, K, Tris,
-                     Mg, dNTPs, temperature):
+                     Mg, dNTPs, dnac1, dnac2, temperature):
     """BP-SEQ-029: counterion screening -- raising [Na+] stabilises a duplex, so
     it does not lower Tm_NN (salt-correction methods 1-4).
+
+    The re-call forwards every non-salt Tm_NN argument (dnac1/dnac2 included,
+    methodology 8.1) and varies only [Na+]; a partial forward would compare a
+    default-concentration Tm against the caller's and fire spuriously.
     """
     if (c_seq is not None or shift or selfcomp or saltcorr not in (1, 2, 3, 4)
             or K or Tris or Mg or dNTPs):
@@ -346,8 +355,9 @@ def check_tm_nn_salt(original_seq, c_seq, shift, selfcomp, saltcorr, Na, K, Tris
     text = str(original_seq).upper().replace("U", "T")
     if len(text) < 2 or set(text) - set("ACGT") or Na <= 0:
         return
-    lower = Tm_NN(text, saltcorr=saltcorr, Na=Na / 2.0)
-    higher = Tm_NN(text, saltcorr=saltcorr, Na=Na * 2.0)
+    lower = Tm_NN(text, saltcorr=saltcorr, Na=Na / 2.0, dnac1=dnac1, dnac2=dnac2)
+    higher = Tm_NN(text, saltcorr=saltcorr, Na=Na * 2.0, dnac1=dnac1,
+                   dnac2=dnac2)
     trigger_if(lower - temperature > 1e-6 or temperature - higher > 1e-6,
                "BP-SEQ-029")
     trigger_if(lower - higher > 1e-6, "BP-SEQ-029")
@@ -869,7 +879,17 @@ def _input_is_additive(distance_matrix, tree=None):
     def d(a, b):
         return 0.0 if a == b else float(distance_matrix[names[a], names[b]])
 
-    tol = 1e-6
+    # Additivity is an EXACT algebraic condition (Buneman 1974): for a true
+    # tree metric the two larger quartet sums are equal, not merely close.
+    # The only slack allowed is floating-point round-off in forming the sums,
+    # which is a few ULP of their own magnitude -- so the tolerance is
+    # ~1e-12 relative, NOT a 1e-6 fudge. A looser, magnitude-proportional
+    # tolerance (an earlier version used 1e-6 * max(1, |sum|)) grows the slack
+    # to ~1 on a 1e6-scale matrix and lets a plainly non-additive matrix pass
+    # (methodology 8.3). The scale is the largest distance in the matrix.
+    scale = max((d(a, b) for a in range(n) for b in range(a)), default=1.0)
+    scale = scale if math.isfinite(scale) and scale > 0.0 else 1.0
+    tol = 64.0 * 2.220446049250313e-16 * scale  # a few dozen ULP of the scale
 
     # A non-negative tree metric is a metric: distances non-negative and the
     # triangle inequality holds on every triple. (Buneman's four-point
@@ -877,10 +897,10 @@ def _input_is_additive(distance_matrix, tree=None):
     # rules those out.)
     for i in range(n):
         for j in range(n):
-            if i != j and d(i, j) < -1e-9:
+            if i != j and d(i, j) < -tol:
                 return False
     for i, j, k in itertools.permutations(range(n), 3):
-        if d(i, j) + d(j, k) < d(i, k) - tol * max(1.0, d(i, k)):
+        if d(i, j) + d(j, k) < d(i, k) - tol:
             return False
     for quartet in itertools.combinations(range(n), 4):
         i, j, k, l = quartet
@@ -890,7 +910,7 @@ def _input_is_additive(distance_matrix, tree=None):
             d(i, l) + d(j, k),
         ))
         # The two largest sums must coincide.
-        if abs(sums[2] - sums[1]) > tol * max(1.0, abs(sums[2])):
+        if abs(sums[2] - sums[1]) > tol:
             return False
     return True
 
