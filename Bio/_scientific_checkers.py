@@ -17,6 +17,7 @@ range/finiteness checks, lookup-table round trips, and generic software
 correctness are explicitly out of scope and are not instrumented here.
 """
 
+import itertools
 import json
 import math
 import os
@@ -279,13 +280,25 @@ def check_tm_gc_monotonicity(seq, temperature, valueset, userset, Na, K, Tris,
     hydrogen bonds versus two for A:T, so at fixed length raising %GC cannot
     lower the melting temperature. The two comparison endpoints are computed
     with the *same* value set and salt/mismatch parameters as the production
-    call, so the invariant holds for any parameterisation, not just default.
+    call, so the invariant holds for every built-in value set.
+
+    Precondition: the empirical GC term must be increasing in %GC. Every
+    built-in ``valueset`` (1-8) satisfies this, but ``Tm_GC`` also lets the
+    caller override the coefficients through ``userset = (A, B, C, D)`` where
+    ``B`` is the per-%GC contribution; a caller passing ``B <= 0`` has
+    explicitly inverted the physics, so the law's premise no longer holds.
     """
     from Bio.SeqUtils.MeltingTemp import Tm_GC
 
     text = str(seq).upper().replace("U", "T")
     if len(text) < 4 or set(text) - set("ACGT"):
         return
+    if userset is not None:
+        try:
+            if float(userset[1]) <= 0.0:
+                return
+        except (TypeError, IndexError, ValueError):
+            return
     kw = dict(valueset=valueset, userset=userset, Na=Na, K=K, Tris=Tris, Mg=Mg,
               dNTPs=dNTPs, saltcorr=saltcorr, mismatch=mismatch)
     tm_lower = Tm_GC("A" * len(text), **kw)
@@ -465,7 +478,14 @@ def check_rna_dna_mass_ordering(original_seq, seq_type, double_stranded, circula
 # ======================================================================
 
 def _rigid_transform(points, seed=0):
-    """Apply a fixed rotation + translation to a list of 3-tuples/arrays."""
+    """Apply a fixed rotation + translation to a list of 3-tuples/arrays.
+
+    The translation is scaled to the spread of the input points. A fixed
+    ``(7, -3, 11)`` shift would, for coordinates far below unit magnitude,
+    round every transformed point to the same float64 value (catastrophic
+    cancellation *in this probe*, not in the API under test); scaling keeps
+    the rigid motion faithful across coordinate scales.
+    """
     import numpy as np
 
     theta = 0.9
@@ -478,8 +498,36 @@ def _rigid_transform(points, seed=0):
         [y * x * (1 - c) + z * s, c + y * y * (1 - c), y * z * (1 - c) - x * s],
         [z * x * (1 - c) - y * s, z * y * (1 - c) + x * s, c + z * z * (1 - c)],
     ])
-    shift = np.array([7.0, -3.0, 11.0])
-    return [rot @ np.asarray(p, dtype=float) + shift for p in points]
+    pts = [np.asarray(p, dtype=float) for p in points]
+    scale = max((float(np.linalg.norm(p)) for p in pts), default=0.0)
+    if not math.isfinite(scale) or scale == 0.0:
+        scale = 1.0
+    shift = np.array([0.7, -0.3, 1.1]) * scale
+    return [rot @ p + shift for p in pts]
+
+
+def _points_well_separated(points, rel=1e-6):
+    """True when every pair of the given 3-D points is separated by at least
+    ``rel`` times the coordinate scale.
+
+    The rigid-invariance probe rotates and translates the points; when two of
+    them are closer than ~1e-6 of the coordinate magnitude, that difference is
+    below float64 resolution after the transform and the recomputed angle is
+    dominated by rounding -- a limitation of the probe (and of the angle's own
+    conditioning), not a violation of Euclidean invariance.
+    """
+    import numpy as np
+
+    pts = [np.asarray(p, dtype=float) for p in points]
+    if any(not np.all(np.isfinite(p)) for p in pts):
+        return False
+    scale = max((float(np.linalg.norm(p)) for p in pts), default=0.0)
+    floor = rel * max(scale, 1.0)
+    for a in range(len(pts)):
+        for b in range(a):
+            if float(np.linalg.norm(pts[a] - pts[b])) < floor:
+                return False
+    return True
 
 
 @_guard("pdb_calc_angle")
@@ -494,9 +542,10 @@ def check_calc_angle(v1, v2, v3, angle):
 
     trigger_if(not _isclose(angle, calc_angle(v3, v2, v1)), "BP-PDB-002")
 
-    p1, p2, p3 = _rigid_transform(
-        [v1.get_array(), v2.get_array(), v3.get_array()]
-    )
+    arrays = [v1.get_array(), v2.get_array(), v3.get_array()]
+    if not _points_well_separated(arrays):
+        return
+    p1, p2, p3 = _rigid_transform(arrays)
     moved = calc_angle(Vector(p1), Vector(p2), Vector(p3))
     trigger_if(not _isclose(angle, moved, tol=1e-7), "BP-PDB-003")
 
@@ -513,11 +562,13 @@ def check_calc_dihedral(v1, v2, v3, v4, angle):
 
     from Bio.PDB.vectors import calc_dihedral, Vector
 
-    p = _rigid_transform(
-        [v1.get_array(), v2.get_array(), v3.get_array(), v4.get_array()]
-    )
-    moved = calc_dihedral(Vector(p[0]), Vector(p[1]), Vector(p[2]), Vector(p[3]))
-    trigger_if(not _isclose(angle, moved, tol=1e-7), "BP-PDB-006")
+    arrays = [v1.get_array(), v2.get_array(), v3.get_array(), v4.get_array()]
+    if _points_well_separated(arrays):
+        p = _rigid_transform(arrays)
+        moved = calc_dihedral(
+            Vector(p[0]), Vector(p[1]), Vector(p[2]), Vector(p[3])
+        )
+        trigger_if(not _isclose(angle, moved, tol=1e-7), "BP-PDB-006")
 
     def mirror(v):
         a = v.get_array().copy()
@@ -792,27 +843,55 @@ def _all_branch_lengths(tree):
     ]
 
 
-def _input_is_additive(distance_matrix, tree):
-    """True when every input pairwise distance equals the corresponding path
-    length in ``tree`` (within tolerance).
+def _input_is_additive(distance_matrix, tree=None):
+    """True when the input distance matrix is additive: it is exactly
+    realisable on some tree with **all-non-negative** branch lengths.
 
     Additivity is the precondition for NJ's order-independence and exact-
     reconstruction theorems (Saitou-Nei 1987; Studier-Keppler 1988). On a
     non-additive matrix NJ may legitimately return different trees for
     different taxon orders (tied Q-matrix minima) and may return negative
     branch lengths -- both are standard, documented NJ behaviour, not defects,
-    so the checkers below stay silent there.
+    so the checkers gated on this predicate stay silent there.
+
+    This is decided directly on the input via the four-point condition: for
+    every quartet {i,j,k,l} the two largest of d(ij)+d(kl), d(ik)+d(jl),
+    d(il)+d(jk) must be equal (Buneman 1974). It does *not* ask whether NJ's
+    output reproduces the matrix -- NJ can fit a non-additive matrix exactly
+    using a negative pendant edge, and such a fit is itself proof of
+    non-additivity, so keying off it would be circular.
     """
-    n = len(distance_matrix)
-    patristic = _patristic(tree)
     names = list(distance_matrix.names)
+    n = len(names)
+    if n < 4:
+        return True
+
+    def d(a, b):
+        return 0.0 if a == b else float(distance_matrix[names[a], names[b]])
+
+    tol = 1e-6
+
+    # A non-negative tree metric is a metric: distances non-negative and the
+    # triangle inequality holds on every triple. (Buneman's four-point
+    # condition alone allows negative edges; the triangle inequality is what
+    # rules those out.)
     for i in range(n):
-        for j in range(i):
-            key = tuple(sorted((names[i], names[j])))
-            if key not in patristic or not _isclose(
-                patristic[key], distance_matrix[names[i], names[j]], tol=1e-6
-            ):
+        for j in range(n):
+            if i != j and d(i, j) < -1e-9:
                 return False
+    for i, j, k in itertools.permutations(range(n), 3):
+        if d(i, j) + d(j, k) < d(i, k) - tol * max(1.0, d(i, k)):
+            return False
+    for quartet in itertools.combinations(range(n), 4):
+        i, j, k, l = quartet
+        sums = sorted((
+            d(i, j) + d(k, l),
+            d(i, k) + d(j, l),
+            d(i, l) + d(j, k),
+        ))
+        # The two largest sums must coincide.
+        if abs(sums[2] - sums[1]) > tol * max(1.0, abs(sums[2])):
+            return False
     return True
 
 
@@ -1006,12 +1085,17 @@ def check_pssm_score_bounds(pssm, sequence, result):
         return
     if not (math.isfinite(lo) and math.isfinite(hi)):
         return
+    # ``PSSM.calculate`` accumulates the score in float32 (C routine) while
+    # ``pssm.min``/``pssm.max`` are float64 column-wise sums, so a sequence that
+    # is exactly the anticonsensus/consensus lands on the bound up to float32
+    # rounding. Scale the tolerance with the bound magnitude, as BP-MTF-001/003.
+    tol = 1e-3 * max(1.0, abs(lo), abs(hi))
     scores = result if hasattr(result, "__len__") else [result]
     for s in scores:
         s = float(s)
         if not math.isfinite(s):
             continue
-        trigger_if(s < lo - 1e-6 or s > hi + 1e-6, "BP-MTF-002")
+        trigger_if(s < lo - tol or s > hi + tol, "BP-MTF-002")
 
 
 @_guard("pssm_reverse_complement_symmetry")
