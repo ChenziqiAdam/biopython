@@ -447,6 +447,16 @@ def molecular_weight(
     >>> print("%0.2f" % molecular_weight("AGC", "protein"))
     249.29
 
+    The molecular weight of an empty sequence is not physically defined.
+    An empty sequence returns the mass of a single water molecule rather than zero or an error:
+
+    >>> print("%0.4f" % molecular_weight("", "DNA"))
+    18.0153
+    >>> print("%0.4f" % molecular_weight("", "RNA"))
+    18.0153
+    >>> print("%0.4f" % molecular_weight("", "protein"))
+    18.0153
+
     """
     try:
         seq = seq.seq
