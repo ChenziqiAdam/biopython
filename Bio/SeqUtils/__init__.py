@@ -645,7 +645,15 @@ class CodonAdaptationIndex(dict):
         If the sequence contains no other codons - for example an empty
         sequence, or a coding sequence made up only of ATG and TGG - the
         geometric mean is taken over zero terms and a ``ZeroDivisionError``
-        is raised.
+        is raised:
+
+        >>> from Bio.SeqUtils import CodonAdaptationIndex
+        >>> cai = CodonAdaptationIndex(["GCTGCCGCA", "ATGTGG"])
+        >>> cai.calculate("ATGTGG")
+        Traceback (most recent call last):
+          ...
+        ZeroDivisionError: division by zero
+        
         """
         cai_value, cai_length = 0, 0
 
