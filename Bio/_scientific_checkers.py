@@ -703,6 +703,17 @@ def check_qcp(reference_coords, coords, rms):
     swapped.run()
     trigger_if(abs(swapped.get_rms() - rms) > tol, "BP-PDB-015")
 
+    # KNOWN LIMITATION (audit 4): QCP's Newton tolerance evalprec (1e-11) and
+    # eigenvector tolerance evecprec (1e-6) are absolute constants applied to
+    # quantities that scale as coordinate^2, so QCP's accuracy is scale
+    # dependent -- at coordinate scale ~1e-6 it can report RMSD ~ 0 for two
+    # different point sets. This checker's probes (rigid motion, argument swap)
+    # are all scale preserving and cannot see it. A scale-covariance probe was
+    # tried and rejected: refitting a *correct* small-coordinate case at an even
+    # smaller scale hits the same QCP weakness and the probe false-fires. The
+    # scale dependence is already an upstream issue; the collinear-reference
+    # failure it also causes IS caught here at ordinary and large scales.
+
 
 # ======================================================================
 # Bio.PDB.Superimposer / SVDSuperimposer
@@ -757,8 +768,19 @@ def check_superimposer(fixed_coord, moving_coord, rot, tran, rms):
     fit_swapped = _fit(mov, ref)
     trigger_if(abs(fit_swapped - rms) > _rms_tol(rms, fit_swapped), "BP-SUP-003")
 
-    exact = np.asarray(_rigid_transform(list(ref)))
-    trigger_if(_fit(ref, exact) > _rms_tol(), "BP-SUP-004")
+    # BP-SUP-004 feeds _rigid_transform(ref) back as an *exact* rigid image and
+    # asserts a zero fit RMSD. Unlike SUP-002/003/007 (which compare two equally
+    # perturbed RMSDs), this uses the transformed set as absolute ground truth,
+    # so the ~1 ULP that _rigid_transform introduces into the pairwise distances
+    # matters: on a nearly rank-deficient ref that ULP is amplified by the
+    # condition number into a macroscopic RMSD (audit 4, BP-SUP-004, cond ~2e16
+    # -> RMSD 0.34). Only run SUP-004 when centred ref is well-conditioned, so
+    # the probe is a faithful isometry.
+    centred = ref - ref.mean(axis=0)
+    sv = np.linalg.svd(centred, compute_uv=False)
+    if sv[0] > 0.0 and sv[-1] > 1e-8 * sv[0]:
+        exact = np.asarray(_rigid_transform(list(ref)))
+        trigger_if(_fit(ref, exact) > _rms_tol(), "BP-SUP-004")
 
     perm = np.random.RandomState(0).permutation(ref.shape[0])
     fit_perm = _fit(ref[perm], mov[perm])
@@ -839,7 +861,14 @@ def _scores_above_epsilon(aligner):
     nonzero = [t for t in terms if t > 0.0]
     if not nonzero:
         return False
-    return min(nonzero) > 1e3 * eps
+    # (a) every term must clear the traceback roundoff tolerance, and
+    # (b) the scheme's dynamic range must be small enough that the DP
+    # intermediates (which can reach ~L * max_term) do not lose the final
+    # score below one float64 ULP. A scheme spanning >~1e10 makes the
+    # accumulator's ULP exceed the answer, and score()/align() legitimately
+    # disagree by representation error -- not a Biopython defect (audit 4,
+    # BP-ALN-006: match 1e15 / extend -0.1, intermediates 2e15, 1 ULP = 0.44).
+    return min(nonzero) > 1e3 * eps and max(terms) / min(nonzero) < 1e10
 
 
 def _symmetric_scoring(aligner):
@@ -1168,14 +1197,20 @@ def check_tree_branch_lengths(distance_matrix, tree, method):
     if not lengths:
         return
     negative = min(lengths)
+    # A branch length is an amount of change; "zero" here means zero to the
+    # reconstruction's float64 round-off, which scales with the input distance
+    # magnitude (methodology 8.3). A fixed -1e-6 fired at matrix scale ~1e12
+    # where the true relative negativity was still ~1e-17 -- audit 4, BP-PHY-004.
+    # PHY-001/002/003 already scale by _matrix_scale; this site was missed.
+    tol = -1e-9 * _matrix_scale(distance_matrix)
     if method == "upgma":
-        trigger_if(negative < -1e-6, "BP-PHY-004")
+        trigger_if(negative < tol, "BP-PHY-004")
         return
     # NJ: only flag when the input is additive (negative lengths are otherwise
     # an accepted outcome of NJ on non-additive data).
     if len(distance_matrix) < 4 or not _input_is_additive(distance_matrix, tree):
         return
-    trigger_if(negative < -1e-6, "BP-PHY-004")
+    trigger_if(negative < tol, "BP-PHY-004")
 
 
 # ======================================================================
@@ -1188,6 +1223,30 @@ def _pssm_columns(pssm):
         {letter: pssm[letter][i] for letter in pssm.alphabet}
         for i in range(pssm.length)
     ]
+
+
+def _pssm_logodds_bounded(pssm, cap=1e6):
+    """True when every PSSM entry is a plausible log-odds value (|entry| < cap).
+
+    ``PSSM.calculate`` accumulates the site score in ``np.float32`` (a
+    documented space optimisation). A log-odds score of a 4-letter column is
+    bounded in magnitude by ~20 in practice; even pathological pseudo-count
+    choices stay well below ``cap``. With entries at ~1e30 the true site score
+    can be 10+ orders of magnitude below one float32 ULP of the summed terms,
+    so no float32 accumulation can be strand-symmetric or match a float64
+    column sum -- that is outside the input class where the PSSM model is
+    meaningful, not a defect (audit 4, BP-MTF-003). The additivity, bounds,
+    and reverse-complement laws are stated over real log-odds matrices.
+    """
+    for col in _pssm_columns(pssm):
+        for v in col.values():
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                return False
+            if math.isfinite(fv) and abs(fv) >= cap:
+                return False
+    return True
 
 
 @_guard("pssm_score_additivity")
@@ -1205,6 +1264,8 @@ def check_pssm_score_additivity(pssm, sequence, result):
     text = text.upper()
     m = pssm.length
     if len(text) < m or set(text) - set("ACGT"):
+        return
+    if not _pssm_logodds_bounded(pssm):
         return
     cols = _pssm_columns(pssm)
     # score at offset 0 only
@@ -1234,6 +1295,8 @@ def check_pssm_score_bounds(pssm, sequence, result):
         return
     text = text.upper()
     if set(text) - set("ACGT"):
+        return
+    if not _pssm_logodds_bounded(pssm):
         return
     try:
         lo, hi = float(pssm.min), float(pssm.max)
@@ -1269,6 +1332,8 @@ def check_pssm_revcomp(pssm, sequence, result):
     text = text.upper()
     m = pssm.length
     if len(text) != m or set(text) - set("ACGT"):
+        return
+    if not _pssm_logodds_bounded(pssm):
         return
     try:
         forward = float(result if not hasattr(result, "__len__") else result[0])
