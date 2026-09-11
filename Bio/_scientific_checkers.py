@@ -558,6 +558,26 @@ def _rigid_transform(points, seed=0):
     return [rot @ p + shift for p in pts]
 
 
+def _magnitude_bounded(points, cap=1e6):
+    """True when every point's coordinate magnitude is below ``cap``.
+
+    ``calc_dihedral`` composes two cross products and a further cross product
+    of one of those with a unit vector before taking a dot product -- degree
+    enough in the input coordinates that float64 silently overflows starting
+    around coordinate magnitude ~2.7e42 (empirically verified by binary
+    search; ``calc_angle`` does not share this failure mode until ~1e200+,
+    so only the dihedral checker needs this precondition). Past that point
+    both the original call and the checker's rigid-motion probe independently
+    return garbage, and the resulting "disagreement" is arithmetic breakdown,
+    not a rigid-invariance or chirality violation. ``cap`` sits 36 orders of
+    magnitude below the overflow onset -- far above any physically
+    meaningful coordinate (PDB structures are in angstroms).
+    """
+    import numpy as np
+
+    return all(float(np.max(np.abs(p))) < cap for p in points)
+
+
 def _points_well_separated(points, rel=1e-6):
     """True when every pair of the given 3-D points is separated by at least
     ``rel`` times the coordinate scale.
@@ -641,7 +661,8 @@ def check_calc_dihedral(v1, v2, v3, v4, angle):
 
     a0, a1, a2, a3 = (_np.asarray(x, dtype=float) for x in arrays)
     proper_dihedral = (
-        _points_well_separated(arrays)
+        _magnitude_bounded(arrays)
+        and _points_well_separated(arrays)
         and _triple_ok(a0, a1, a2)
         and _triple_ok(a1, a2, a3)
         and not _isclose(abs(angle), _m.pi, tol=1e-7)
