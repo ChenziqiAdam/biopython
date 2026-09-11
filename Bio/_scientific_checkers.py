@@ -300,21 +300,40 @@ def check_tm_gc_monotonicity(seq, temperature, valueset, userset, Na, K, Tris,
     with the *same* value set and salt/mismatch parameters as the production
     call, so the invariant holds for every built-in value set.
 
-    Precondition: the empirical GC term must be increasing in %GC. Every
-    built-in ``valueset`` (1-8) satisfies this, but ``Tm_GC`` also lets the
-    caller override the coefficients through ``userset = (A, B, C, D)`` where
-    ``B`` is the per-%GC contribution; a caller passing ``B <= 0`` has
-    explicitly inverted the physics, so the law's premise no longer holds.
+    Precondition: the empirical GC term must be increasing in %GC net of any
+    salt correction. Every built-in ``valueset`` (1-8) satisfies this, but
+    ``Tm_GC`` also lets the caller override the coefficients through
+    ``userset = (A, B, C, D)`` where ``B`` is the per-%GC contribution; a
+    caller passing ``B <= 0`` has explicitly inverted the physics, so the
+    law's premise no longer holds.
+
+    Owczarzy salt-correction methods 6 and 7 add a term
+    ``(4.29*f_GC - 3.95)*1e-5*ln[Na+]`` that is itself GC-dependent and, below
+    1 M Na+, *decreases* with %GC (audit 5): the checker's precondition must
+    bound ``B`` against that term's span, not merely require ``B > 0`` --
+    otherwise a small positive ``B`` can be outweighed by the salt term and the
+    checker fires on an input where Tm genuinely is non-monotone in %GC, which
+    is correct Biopython behaviour, not a defect.
     """
-    from Bio.SeqUtils.MeltingTemp import Tm_GC
+    from Bio.SeqUtils.MeltingTemp import Tm_GC, salt_correction
 
     text = str(seq).upper().replace("U", "T")
     if len(text) < 4 or set(text) - set("ACGT"):
         return
     if userset is not None:
         try:
-            if float(userset[1]) <= 0.0:
+            b = float(userset[1])
+            if b <= 0.0:
                 return
+            if saltcorr in (6, 7):
+                salt_kw = dict(Na=Na, K=K, Tris=Tris, Mg=Mg, dNTPs=dNTPs,
+                                method=saltcorr)
+                salt_span = abs(
+                    salt_correction(seq="G" * len(text), **salt_kw)
+                    - salt_correction(seq="A" * len(text), **salt_kw)
+                )
+                if b * 100.0 <= salt_span:
+                    return
         except (TypeError, IndexError, ValueError):
             return
     kw = dict(valueset=valueset, userset=userset, Na=Na, K=K, Tris=Tris, Mg=Mg,
@@ -606,9 +625,19 @@ def check_calc_dihedral(v1, v2, v3, v4, angle):
     # too. Both are limitations of the probe / the angle's parameterisation,
     # not violations of Euclidean invariance or chirality.
     def _triple_ok(a, b, c):
+        # The dihedral's conditioning is 1/sin(theta) where theta is the angle
+        # between the two triples' normals -- and ||n|| / scale^2 IS sin(theta)
+        # for that triple. A near-collinear triple (sin(theta) small) amplifies
+        # the ~1 ULP coordinate error _rigid_transform introduces by 1/sin(theta),
+        # so the admitted sin(theta) floor and the comparison tolerance below are
+        # coupled, not independent: 1e-9 admitted a condition number of 1e9,
+        # amplifying 1 ULP (~1e-16) to ~1e-7 -- exactly the tol used for the
+        # comparison, so a well-computed dihedral could still fire (audit 5).
+        # Requiring sin(theta) >~ 1e-3 keeps the amplified error <~1e-13, ten
+        # decades under the 1e-7 comparison tolerance.
         n = _np.cross(b - a, c - b)
         scale = max(_np.linalg.norm(b - a), _np.linalg.norm(c - b), 1.0)
-        return float(_np.linalg.norm(n)) > 1e-9 * scale * scale
+        return float(_np.linalg.norm(n)) > 1e-3 * scale * scale
 
     a0, a1, a2, a3 = (_np.asarray(x, dtype=float) for x in arrays)
     proper_dihedral = (
@@ -861,14 +890,63 @@ def _scores_above_epsilon(aligner):
     nonzero = [t for t in terms if t > 0.0]
     if not nonzero:
         return False
-    # (a) every term must clear the traceback roundoff tolerance, and
-    # (b) the scheme's dynamic range must be small enough that the DP
-    # intermediates (which can reach ~L * max_term) do not lose the final
-    # score below one float64 ULP. A scheme spanning >~1e10 makes the
-    # accumulator's ULP exceed the answer, and score()/align() legitimately
-    # disagree by representation error -- not a Biopython defect (audit 4,
-    # BP-ALN-006: match 1e15 / extend -0.1, intermediates 2e15, 1 ULP = 0.44).
-    return min(nonzero) > 1e3 * eps and max(terms) / min(nonzero) < 1e10
+    # Every term must clear the traceback roundoff tolerance -- a scheme with
+    # terms at or below epsilon makes score()/align() legitimately diverge
+    # (documented behaviour of `epsilon`), independent of the comparison
+    # tolerance used elsewhere. The dynamic-range/magnitude question (how
+    # large the DP intermediates get, and what comparison tolerance survives
+    # that) is handled separately by `_score_compare_tol` at each call site,
+    # not folded into this precondition (audit 6 -- a fixed `max/min < 1e10`
+    # here still let a fixed downstream `tol=1e-9` fail: intermediates reach
+    # ~L*max_term regardless of the min/max ratio).
+    return min(nonzero) > 1e3 * eps
+
+
+def _score_compare_tol(aligner, a, b):
+    """Absolute+relative tolerance for comparing two alignment scores of
+    sequences ``a``/``b`` under ``aligner``'s scheme.
+
+    The DP recurrence accumulates a sum of up to ``O(L)`` scoring terms (L the
+    longer sequence length), so an intermediate cell can reach magnitude
+    ``L * max(|term|)`` even when the final score is much smaller (large
+    positive and negative contributions cancelling). The float64 rounding on
+    that intermediate is one ULP of ITS magnitude, not of the final answer's,
+    so the comparison tolerance must be derived from the intermediate scale,
+    not from the answer or from a fixed constant (audit 6, BP-ALN-006: with
+    match=1e8, extend=-3.3e-2, L=11, intermediates reach ~1.1e9, one ULP there
+    is ~2.4e-7 -- 200x the fixed `1e-9` this replaces, at a term ratio of 3e9,
+    well under the `1e10` dynamic-range gate that previously guarded this).
+    """
+    import numpy as np
+
+    terms = [0.0]
+    for name in (
+        "match_score", "mismatch_score",
+        "open_internal_insertion_score", "extend_internal_insertion_score",
+        "open_internal_deletion_score", "extend_internal_deletion_score",
+        "open_left_insertion_score", "extend_left_insertion_score",
+        "open_right_insertion_score", "extend_right_insertion_score",
+        "open_left_deletion_score", "extend_left_deletion_score",
+        "open_right_deletion_score", "extend_right_deletion_score",
+    ):
+        try:
+            v = float(getattr(aligner, name))
+            if math.isfinite(v):
+                terms.append(abs(v))
+        except Exception:
+            pass
+    matrix = aligner.substitution_matrix
+    if matrix is not None:
+        arr = np.abs(np.asarray(matrix, dtype=float))
+        finite = arr[np.isfinite(arr)]
+        if finite.size:
+            terms.append(float(finite.max()))
+    max_term = max(terms)
+    L = max(len(a), len(b), 1)
+    # 1e3x safety margin over one float64 ULP of the largest plausible DP
+    # intermediate; floored at 1e-9 to match this module's other exact-score
+    # comparisons (methodology 8.3).
+    return max(1e-9, 1e3 * 2.220446049250313e-16 * L * max_term)
 
 
 def _symmetric_scoring(aligner):
@@ -913,8 +991,10 @@ def check_aligner_score(aligner, seqA, seqB, score):
     if not _symmetric_scoring(aligner) or not _scores_above_epsilon(aligner):
         return
 
+    tol = _score_compare_tol(aligner, a, b)
+
     clone = _clone_aligner(aligner)
-    trigger_if(not _isclose(float(clone.score(b, a)), float(score), tol=1e-9),
+    trigger_if(not _within(float(clone.score(b, a)), float(score), tol),
                "BP-ALN-001")
 
     lr_symmetric = (
@@ -928,8 +1008,8 @@ def check_aligner_score(aligner, seqA, seqB, score):
     if lr_symmetric:
         clone2 = _clone_aligner(aligner)
         trigger_if(
-            not _isclose(
-                float(clone2.score(a[::-1], b[::-1])), float(score), tol=1e-9
+            not _within(
+                float(clone2.score(a[::-1], b[::-1])), float(score), tol
             ),
             "BP-ALN-006",
         )
@@ -944,7 +1024,7 @@ def check_aligner_score(aligner, seqA, seqB, score):
             clone3 = _clone_aligner(aligner)
             clone3.substitution_matrix = transposed
             trigger_if(
-                not _isclose(float(clone3.score(a, b)), float(score), tol=1e-9),
+                not _within(float(clone3.score(a, b)), float(score), tol),
                 "BP-ALN-009",
             )
 
@@ -963,7 +1043,8 @@ def check_aligner_align_vs_score(aligner, seqA, seqB, align_score):
         # legitimately diverge (documented behaviour of `epsilon`), not a bug.
         return
     clone = _clone_aligner(aligner)
-    trigger_if(not _isclose(float(clone.score(a, b)), float(align_score), tol=1e-9),
+    tol = _score_compare_tol(aligner, a, b)
+    trigger_if(not _within(float(clone.score(a, b)), float(align_score), tol),
                "BP-ALN-003")
 
 
