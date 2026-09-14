@@ -737,8 +737,7 @@ def check_qcp(reference_coords, coords, rms):
     # RMSD is O(coordinate magnitude); the absolute tolerance scales with it
     # (methodology 8.3). Compared directly, NOT via _isclose -- _isclose would
     # take this value as a relative tolerance and a large tol would mask any
-    # discrepancy. This still catches the collinear-reference QCP failure by a
-    # wide margin (that returns an RMSD ~1e10 x the coordinate scale).
+    # discrepancy.
     coord_scale = float(max(np.abs(ref).max(), np.abs(mov).max(), 1.0))
     tol = 1e-6 * coord_scale
 
@@ -753,16 +752,45 @@ def check_qcp(reference_coords, coords, rms):
     swapped.run()
     trigger_if(abs(swapped.get_rms() - rms) > tol, "BP-PDB-015")
 
+    # Fixed post-audit (2026-09-14/15, independent triggerability + Opus
+    # confirmatory audit): the two probes above are both blind to a
+    # collinear REFERENCE set specifically -- the rigid-motion probe keeps
+    # `ref` fixed (only `mov` is transformed), and the argument-swap probe
+    # puts `ref` into the *moving* slot, so neither probe ever re-fits with
+    # a collinear set in the reference slot other than the original call
+    # itself. The documented collinear-reference bug
+    # (issues/ISSUE_qcp_collinear.md) uses exactly that orientation and was
+    # previously invisible to this checker (0 triggers on the documented
+    # repro, confirmed independently twice). This is a distinct gap from
+    # the KNOWN LIMITATION below (that one is about coordinate *scale*;
+    # this one is about argument-*slot* asymmetry at ordinary scale) --
+    # the old in-code claim that the collinear-reference failure "IS
+    # caught here at ordinary and large scales" was simply wrong. Fixed by
+    # adding a third probe that rigid-transforms the REFERENCE set instead
+    # of the moving one; RMSD is invariant under a rigid motion of either
+    # argument, so the law is equally valid, and `_rigid_transform` is
+    # already scale-covariant (methodology 8.2) so this is not the
+    # rejected scale-covariance probe below. Verified: catches the
+    # documented repro with ~64x margin (gap 6.37e-05 vs tol 1e-6); 0
+    # false positives across two independent sweeps of 3000-4000
+    # well-conditioned random trials (scale 1e-6 to 1e8, N 4-25), worst
+    # observed ratio to tolerance ~0.03-0.1.
+    ref_moved = np.asarray(_rigid_transform(list(ref)))
+    ref_probe = QCPSuperimposer()
+    ref_probe.set(ref_moved, mov)
+    ref_probe.run()
+    trigger_if(abs(ref_probe.get_rms() - rms) > tol, "BP-PDB-015")
+
     # KNOWN LIMITATION (audit 4): QCP's Newton tolerance evalprec (1e-11) and
     # eigenvector tolerance evecprec (1e-6) are absolute constants applied to
     # quantities that scale as coordinate^2, so QCP's accuracy is scale
     # dependent -- at coordinate scale ~1e-6 it can report RMSD ~ 0 for two
-    # different point sets. This checker's probes (rigid motion, argument swap)
-    # are all scale preserving and cannot see it. A scale-covariance probe was
-    # tried and rejected: refitting a *correct* small-coordinate case at an even
-    # smaller scale hits the same QCP weakness and the probe false-fires. The
-    # scale dependence is already an upstream issue; the collinear-reference
-    # failure it also causes IS caught here at ordinary and large scales.
+    # different point sets. This checker's probes (rigid motion, argument
+    # swap) are all scale preserving and cannot see it. A scale-covariance
+    # probe was tried and rejected: refitting a *correct* small-coordinate
+    # case at an even smaller scale hits the same QCP weakness and the probe
+    # false-fires. The scale dependence remains an open upstream limitation,
+    # unrelated to the argument-slot gap fixed above.
 
 
 # ======================================================================
