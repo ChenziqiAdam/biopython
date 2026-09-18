@@ -4619,7 +4619,7 @@ static struct fogsaa_queue_node fogsaa_queue_pop(struct fogsaa_queue *queue) {
     } \
     kA = sA[nA-1]; \
     temp = row[0]; \
-    row[0] = nA * right_gap_extend_B; \
+    row[0] = nA * left_gap_extend_B; \
     for (j = 1; j < nB; j++) { \
         kB = sB[j-1]; \
         SELECT_SCORE_GLOBAL(temp + (align_score), \
@@ -4951,8 +4951,8 @@ static struct fogsaa_queue_node fogsaa_queue_pop(struct fogsaa_queue *queue) {
                             Iy_row[nB] + right_gap_open_B); \
         Ix_row[nB] = score; \
         SELECT_SCORE_GLOBAL(M_row[nB-1] + gap_open_A, \
-                            Iy_row[nB-1] + gap_extend_A, \
-                            Ix_row[nB-1] + gap_open_A); \
+                            Ix_row[nB-1] + gap_open_A, \
+                            Iy_row[nB-1] + gap_extend_A); \
         Iy_row[nB] = score; \
     } \
 \
@@ -4976,8 +4976,8 @@ static struct fogsaa_queue_node fogsaa_queue_pop(struct fogsaa_queue *queue) {
         Ix_temp = Ix_row[j]; \
         Ix_row[j] = score; \
         SELECT_SCORE_GLOBAL(M_row[j-1] + right_gap_open_A, \
-                            Iy_row[j-1] + right_gap_extend_A, \
-                            Ix_row[j-1] + right_gap_open_A); \
+                            Ix_row[j-1] + right_gap_open_A, \
+                            Iy_row[j-1] + right_gap_extend_A); \
         Iy_temp = Iy_row[j]; \
         Iy_row[j] = score; \
     } \

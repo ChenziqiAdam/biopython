@@ -378,17 +378,21 @@ def check_tm_nn_revcomp(original_seq, c_seq, shift, selfcomp, nn_table, saltcorr
 
 
 @_guard("tm_nn_salt")
-def check_tm_nn_salt(original_seq, c_seq, shift, selfcomp, saltcorr, Na, K, Tris,
-                     Mg, dNTPs, dnac1, dnac2, temperature):
+def check_tm_nn_salt(original_seq, c_seq, shift, selfcomp, nn_table, saltcorr,
+                     Na, K, Tris, Mg, dNTPs, dnac1, dnac2, temperature):
     """BP-SEQ-029: counterion screening -- raising [Na+] stabilises a duplex, so
     it does not lower Tm_NN (salt-correction methods 1-4).
 
     The re-call forwards every non-salt Tm_NN argument (dnac1/dnac2 included,
     methodology 8.1) and varies only [Na+]; a partial forward would compare a
-    default-concentration Tm against the caller's and fire spuriously.
+    default-concentration Tm against the caller's and fire spuriously. As with
+    BP-SEQ-028, a non-default nn_table is excluded rather than silently
+    dropped: the re-call must use the caller's own NN parameter table, not
+    Tm_NN's default, or it compares Tm values computed under two different
+    thermodynamic models rather than probing the salt term in isolation.
     """
-    if (c_seq is not None or shift or selfcomp or saltcorr not in (1, 2, 3, 4)
-            or K or Tris or Mg or dNTPs):
+    if (c_seq is not None or shift or selfcomp or nn_table is not None
+            or saltcorr not in (1, 2, 3, 4) or K or Tris or Mg or dNTPs):
         return
     from Bio.SeqUtils.MeltingTemp import Tm_NN
 

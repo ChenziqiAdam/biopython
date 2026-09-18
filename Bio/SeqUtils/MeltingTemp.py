@@ -1087,7 +1087,8 @@ def Tm_NN(
             dnac1, dnac2, melting_temp,
         )
         _scientific_checkers.check_tm_nn_salt(
-            _sci_original_seq, _sci_user_c_seq, shift, selfcomp, saltcorr,
+            _sci_original_seq, _sci_user_c_seq, shift, selfcomp,
+            _sci_user_nn_table, saltcorr,
             Na, K, Tris, Mg, dNTPs, dnac1, dnac2, melting_temp,
         )
     return melting_temp
