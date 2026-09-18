@@ -1070,6 +1070,16 @@ def check_aligner_score(aligner, seqA, seqB, score):
         transposed = matrix.transpose() if hasattr(matrix, "transpose") else None
         if transposed is not None and np.allclose(np.asarray(matrix),
                                                   np.asarray(transposed)):
+            # matrix.transpose() returns a non-C-contiguous view; the
+            # PairwiseAligner.substitution_matrix C-extension setter rejects
+            # non-contiguous arrays. Rebuilding with the same class/alphabet
+            # over a C-contiguous copy of the same values is a neutral,
+            # value-preserving step (SANITIZER.md 5.8 "X"): it does not
+            # change which entries are compared, only their memory layout.
+            transposed = type(matrix)(
+                alphabet=matrix.alphabet,
+                data=np.ascontiguousarray(np.asarray(transposed)),
+            )
             clone3 = _clone_aligner(aligner)
             clone3.substitution_matrix = transposed
             trigger_if(
