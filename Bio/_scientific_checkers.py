@@ -619,7 +619,10 @@ def check_calc_angle(v1, v2, v3, angle):
     trigger_if(not _isclose(angle, calc_angle(v3, v2, v1)), "BP-PDB-002")
 
     arrays = [v1.get_array(), v2.get_array(), v3.get_array()]
-    if not _points_well_separated(arrays):
+    # The rigid probe forms quadratic norms.  At extreme-but-finite coordinate
+    # magnitudes those norms overflow before the geometric law is evaluated;
+    # that is outside this float64 error model, not a loss of rigid invariance.
+    if not _magnitude_bounded(arrays) or not _points_well_separated(arrays):
         return
     p1, p2, p3 = _rigid_transform(arrays)
     moved = calc_angle(Vector(p1), Vector(p2), Vector(p3))
@@ -704,6 +707,11 @@ def check_rotmat(p, q, matrix):
     import numpy as np
 
     pa, qa0 = p.get_array(), q.get_array()
+    # ``np.linalg.norm`` and the dot product below are quadratic in coordinate
+    # magnitude.  Keep the checker inside the same bounded float64 geometry
+    # domain used by the dihedral/angle probes.
+    if not _magnitude_bounded([pa, qa0]):
+        return
     np_ = np.linalg.norm(pa) * np.linalg.norm(qa0)
     if np_ < 1e-12 or abs(abs(float(np.dot(pa, qa0)) / np_) - 1.0) < 1e-9:
         return
@@ -903,7 +911,7 @@ def _clone_aligner(aligner):
     return clone
 
 
-def _scores_above_epsilon(aligner):
+def _scores_above_epsilon(aligner, sequence_length=1):
     """True when every nonzero term of the scoring scheme is safely larger than
     the aligner's ``epsilon`` (its documented traceback roundoff tolerance,
     default 1e-6).
@@ -952,7 +960,16 @@ def _scores_above_epsilon(aligner):
     # not folded into this precondition (audit 6 -- a fixed `max/min < 1e10`
     # here still let a fixed downstream `tol=1e-9` fail: intermediates reach
     # ~L*max_term regardless of the min/max ratio).
-    return min(nonzero) > 1e3 * eps
+    if min(nonzero) <= 1e3 * eps:
+        return False
+    # A DP cell may accumulate O(L) score terms.  Finite individual scores do
+    # not imply a representable optimum (for example 2 * 1e308).  Leave a
+    # conservative factor-16 margin for affine-gap transitions and competing
+    # paths; overflow is outside the checkers' float64 comparison model.
+    max_term = max(nonzero)
+    return max_term <= np.finfo(float).max / (
+        16.0 * max(int(sequence_length), 1)
+    )
 
 
 def _score_compare_tol(aligner, a, b):
@@ -1041,7 +1058,9 @@ def check_aligner_score(aligner, seqA, seqB, score):
     a, b = _seq_text(seqA), _seq_text(seqB)
     if a is None or b is None or not a or not b:
         return
-    if not _symmetric_scoring(aligner) or not _scores_above_epsilon(aligner):
+    if not _symmetric_scoring(aligner) or not _scores_above_epsilon(
+        aligner, max(len(a), len(b))
+    ):
         return
 
     tol = _score_compare_tol(aligner, a, b)
@@ -1101,7 +1120,7 @@ def check_aligner_align_vs_score(aligner, seqA, seqB, align_score):
     a, b = _seq_text(seqA), _seq_text(seqB)
     if a is None or b is None or not a or not b:
         return
-    if not _scores_above_epsilon(aligner):
+    if not _scores_above_epsilon(aligner, max(len(a), len(b))):
         # scores below the aligner's traceback epsilon: score() and align()
         # legitimately diverge (documented behaviour of `epsilon`), not a bug.
         return
@@ -1157,6 +1176,27 @@ def _matrix_scale(distance_matrix):
     return max([1.0, *vals])
 
 
+def _matrix_arithmetic_safe(distance_matrix):
+    """Whether O(n)-term float64 distance arithmetic cannot overflow.
+
+    NJ and UPGMA form row sums and affine combinations of pairwise distances.
+    A matrix may contain finite entries while those required intermediates are
+    not representable.  Such a call is outside these checkers' error model.
+    """
+    import sys
+
+    names = list(distance_matrix.names)
+    vals = [
+        abs(float(distance_matrix[names[i], names[j]]))
+        for i in range(len(names))
+        for j in range(i)
+    ]
+    if not all(math.isfinite(v) for v in vals):
+        return False
+    max_value = max(vals, default=0.0)
+    return max_value <= sys.float_info.max / (64.0 * max(len(names), 1))
+
+
 def _input_is_additive(distance_matrix, tree=None):
     """True when the input distance matrix is additive: it is exactly
     realisable on some tree with **all-non-negative** branch lengths.
@@ -1177,6 +1217,8 @@ def _input_is_additive(distance_matrix, tree=None):
     """
     names = list(distance_matrix.names)
     n = len(names)
+    if not _matrix_arithmetic_safe(distance_matrix):
+        return False
     if n < 4:
         return True
 
@@ -1297,7 +1339,7 @@ def check_upgma_ultrametric(distance_matrix, tree):
     dendrogram cannot be interpreted as a clock-like divergence history, which
     is the whole modelling premise of UPGMA.
     """
-    if len(distance_matrix) < 3:
+    if len(distance_matrix) < 3 or not _matrix_arithmetic_safe(distance_matrix):
         return
     # Tolerance scales with the input distance magnitude (methodology 8.3):
     # a fixed 1e-6 is far too tight on a matrix with entries ~1e4.
@@ -1337,6 +1379,8 @@ def check_tree_branch_lengths(distance_matrix, tree, method):
     evolutionary time" and distorts every downstream length-weighted analysis
     (patristic distance, rate estimation, ancestral-state reconstruction).
     """
+    if not _matrix_arithmetic_safe(distance_matrix):
+        return
     lengths = _all_branch_lengths(tree)
     if not lengths:
         return

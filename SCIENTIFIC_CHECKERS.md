@@ -1,7 +1,7 @@
 # Scientific checkers
 
-This reviewed bank exposes 32 active checkers in 32 families.
-Quarantined candidates are not public and are not scored.
+This bank exposes all 40 instrumented checkers in 38 families.
+Every listed checker ID is public and scored.
 
 Set `SCIBENCH_TRIGGER_LOG` to a writable file and exercise the normal
 public API. Direct logger calls and synthetic fault injection are not
