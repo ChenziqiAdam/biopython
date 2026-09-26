@@ -13,6 +13,7 @@ from typing import Optional
 import numpy as np  # type: ignore
 
 from Bio import _scientific_checkers
+from Bio import _traditional_checkers
 
 
 def m2rotaxis(m):
@@ -207,6 +208,8 @@ def rotmat(p, q):
     rot = np.dot(refmat(q, -p), refmat(p, -p))
     if _scientific_checkers.enabled():
         _scientific_checkers.check_rotmat(p, q, rot)
+    if _traditional_checkers.enabled():
+        _traditional_checkers.check_rotmat_shape(rot)
     return rot
 
 
@@ -227,6 +230,8 @@ def calc_angle(v1, v2, v3):
     angle = d1.angle(d3)
     if _scientific_checkers.enabled():
         _scientific_checkers.check_calc_angle(v1, v2, v3, angle)
+    if _traditional_checkers.enabled():
+        _traditional_checkers.check_angle_return_range("angle", angle)
     return angle
 
 
@@ -256,6 +261,8 @@ def calc_dihedral(v1, v2, v3, v4):
         pass
     if _scientific_checkers.enabled():
         _scientific_checkers.check_calc_dihedral(v1, v2, v3, v4, angle)
+    if _traditional_checkers.enabled():
+        _traditional_checkers.check_angle_return_range("dihedral", angle)
     return angle
 
 
@@ -350,6 +357,8 @@ class Vector:
         """
         if self.norm():
             self._ar = self._ar / self.norm()
+            if _traditional_checkers.enabled():
+                _traditional_checkers.check_refmat_normalize_finite(self._ar)
 
     def normalized(self):
         """Return a normalized copy of the Vector.
@@ -364,6 +373,8 @@ class Vector:
         """Return angle between two vectors."""
         n1 = self.norm()
         n2 = other.norm()
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_vector_angle_zero_length(n1, n2)
         c = (self * other) / (n1 * n2)
         # Take care of roundoff errors
         c = min(c, 1)

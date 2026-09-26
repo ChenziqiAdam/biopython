@@ -14,6 +14,7 @@ from Bio.Phylo import BaseTree
 from Bio.Align import Alignment, MultipleSeqAlignment
 from Bio.Align import substitution_matrices
 from Bio import _scientific_checkers
+from Bio import _traditional_checkers
 
 
 # flake8: noqa
@@ -762,6 +763,8 @@ class DistanceTreeConstructor(TreeConstructor):
             dm.names[min_j] = "Inner" + str(inner_count)
 
             del dm[min_i]
+            if _traditional_checkers.enabled():
+                _traditional_checkers.check_upgma_matrix_finite(dm)
         inner_clade.branch_length = 0
         tree = BaseTree.Tree(inner_clade)
         if _scientific_checkers.enabled():
@@ -769,6 +772,9 @@ class DistanceTreeConstructor(TreeConstructor):
             _scientific_checkers.check_tree_branch_lengths(
                 distance_matrix, tree, "upgma"
             )
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_tree_leaf_count(distance_matrix.names, tree)
+            _traditional_checkers.check_tree_leaf_names(distance_matrix.names, tree)
         return tree
 
     def nj(self, distance_matrix):
@@ -796,7 +802,15 @@ class DistanceTreeConstructor(TreeConstructor):
         if len(dm) == 1:
             root = clades[0]
 
-            return BaseTree.Tree(root, rooted=False)
+            tree = BaseTree.Tree(root, rooted=False)
+            if _traditional_checkers.enabled():
+                _traditional_checkers.check_tree_leaf_count(
+                    distance_matrix.names, tree
+                )
+                _traditional_checkers.check_tree_leaf_names(
+                    distance_matrix.names, tree
+                )
+            return tree
         elif len(dm) == 2:
             # minimum distance will always be [1,0]
             min_i = 1
@@ -811,7 +825,15 @@ class DistanceTreeConstructor(TreeConstructor):
             clades[0] = inner_clade
             root = clades[0]
 
-            return BaseTree.Tree(root, rooted=False)
+            tree = BaseTree.Tree(root, rooted=False)
+            if _traditional_checkers.enabled():
+                _traditional_checkers.check_tree_leaf_count(
+                    distance_matrix.names, tree
+                )
+                _traditional_checkers.check_tree_leaf_names(
+                    distance_matrix.names, tree
+                )
+            return tree
         while len(dm) > 2:
             # calculate nodeDist
             for i in range(0, len(dm)):
@@ -879,6 +901,9 @@ class DistanceTreeConstructor(TreeConstructor):
             _scientific_checkers.check_tree_branch_lengths(
                 distance_matrix, tree, "nj"
             )
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_tree_leaf_count(distance_matrix.names, tree)
+            _traditional_checkers.check_tree_leaf_names(distance_matrix.names, tree)
         return tree
 
     def _height_of(self, clade):

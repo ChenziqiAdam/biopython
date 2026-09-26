@@ -53,6 +53,7 @@ import functools
 import sys
 
 from Bio import _scientific_checkers
+from Bio import _traditional_checkers
 from Bio.Data import IUPACData
 from Bio.Seq import Seq
 from Bio.SeqUtils import IsoelectricPoint  # Local
@@ -157,6 +158,8 @@ class ProteinAnalysis:
             dipeptide_value = index[this][next]
             score += dipeptide_value
 
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_instability_index_length(self.length)
         instability = (10.0 / self.length) * score
         if _scientific_checkers.enabled():
             _scientific_checkers.check_instability_additivity(
@@ -313,6 +316,10 @@ class ProteinAnalysis:
             _scientific_checkers.check_protein_scale_output(
                 self.sequence, param_dict, window, edge, scores
             )
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_protein_scale_shape(
+                self.length, window, scores
+            )
         return scores
 
     def isoelectric_point(self):
@@ -329,6 +336,8 @@ class ProteinAnalysis:
                 self.sequence, point, ie_point.charge_at_pH(point)
             )
             _scientific_checkers.check_charge_monotonicity(self.sequence)
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_pi_bracket_bounds(4.05, 12, point)
         return point
 
     def charge_at_pH(self, pH):

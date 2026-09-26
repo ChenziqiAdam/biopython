@@ -21,6 +21,7 @@ from Bio.Seq import Seq
 from . import _pwm  # type: ignore
 
 from Bio import _scientific_checkers
+from Bio import _traditional_checkers
 
 
 class GenericPositionMatrix(dict):
@@ -441,6 +442,8 @@ class PositionSpecificScoringMatrix(GenericPositionMatrix):
 
         n = len(sequence)
         m = self.length
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_pssm_short_sequence(n, m)
         # Create the numpy arrays here; the C module then does not rely on numpy
         # Use a float32 for the scores array to save space
         scores = np.empty(n - m + 1, np.float32)
@@ -458,6 +461,12 @@ class PositionSpecificScoringMatrix(GenericPositionMatrix):
             _scientific_checkers.check_pssm_score_additivity(self, sequence, result)
             _scientific_checkers.check_pssm_score_bounds(self, sequence, result)
             _scientific_checkers.check_pssm_revcomp(self, sequence, result)
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_pssm_output_shape(n, m, scores)
+            _sci_acgt = set(sequence.upper()) <= {65, 67, 71, 84}  # b"ACGT"
+            _traditional_checkers.check_pssm_output_finite(
+                n, m, _sci_acgt, result
+            )
 
         return result
 

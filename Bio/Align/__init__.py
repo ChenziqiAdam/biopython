@@ -34,6 +34,7 @@ except ImportError:
 
 from Bio import BiopythonDeprecationWarning
 from Bio import _scientific_checkers
+from Bio import _traditional_checkers
 from Bio.Align import _aligncore  # type: ignore
 from Bio.Align import _codonaligner  # type: ignore
 from Bio.Align import _pairwisealigner  # type: ignore
@@ -4561,6 +4562,8 @@ AlignmentCounts object returned by the .counts method of an Alignment object."""
             _scientific_checkers.check_aligner_score(
                 self, _sci_seqA, _sci_seqB, result
             )
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_aligner_score_finite(result)
         return result
 
     def __getstate__(self):

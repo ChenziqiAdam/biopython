@@ -18,6 +18,7 @@ from math import pi
 from math import sin
 
 from Bio import _scientific_checkers
+from Bio import _traditional_checkers
 from Bio.Data import IUPACData
 from Bio.Data.CodonTable import standard_dna_table
 from Bio.Seq import complement
@@ -211,6 +212,8 @@ def GC_skew(seq, window=100):
         values.append(skew)
     if _scientific_checkers.enabled():
         _scientific_checkers.check_gc_skew(seq, window, values)
+    if _traditional_checkers.enabled():
+        _traditional_checkers.check_gc_skew_finite(values)
     return values
 
 
@@ -673,6 +676,8 @@ class CodonAdaptationIndex(dict):
             else:
                 cai_length += 1
 
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_cai_length_division(cai_length)
         if not _scientific_checkers.enabled():
             return exp(cai_value / cai_length)
         try:
