@@ -494,6 +494,30 @@
       "observation_point": "in CodonAdaptationIndex.calculate, at the point self[codon] would raise KeyError and the codon is checked against the literal {TGA, TAA, TAG} set; reconstructed after calculate() returns from the sequence, the index, and index._table",
       "alarm": "a codon in the sequence is a member of index._table.stop_codons but absent from self, OR a codon is a literal member of {TGA, TAA, TAG}, absent from self, and not a member of index._table.stop_codons",
       "rationale": "the hardcoded literal set is a shortcut standing in for the table's own declared stop-codon set; several codon tables Biopython ships assign additional or different stop codons (vertebrate mitochondrial stops on AGA/AGG in addition to TAA/TAG), so a coding sequence built under such a table could in principle contain a true stop codon calculate() does not recognize as one"
+    },
+    {
+      "id": "BP-SEQ-056",
+      "family": "cai_sense_codon_classification_consistency",
+      "source": "Bio/SeqUtils/__init__.py",
+      "symbol": "CodonAdaptationIndex.calculate",
+      "scientific_quantity": "sense/stop codon partition under the instance's own genetic code table",
+      "precondition": "any CodonAdaptationIndex instance and any in-frame DNA sequence over {A,C,G,T}, observed at the moment calculate() is about to raise TypeError for a codon unresolved by self and not in the literal stop set {TGA,TAA,TAG}",
+      "invariant": "for a self-consistent instance, every codon in index._table.forward_table is a key of index (guaranteed jointly by __init__'s construction of self from table.forward_table.items()), so the TypeError branch should never fire for a codon the instance's own table calls a sense codon",
+      "observation_point": "inside calculate()'s accumulation loop, in the except KeyError: branch, immediately before raising TypeError",
+      "alarm": "the codon about to cause TypeError is present in index._table.forward_table (a genuine sense codon under the instance's declared genetic code) yet absent from index itself",
+      "rationale": "an index that reports a codon as illegal, when its own declared genetic code recognizes that codon as coding for an amino acid, means the weight table and the genetic-code declaration carried by the same instance have drifted apart"
+    },
+    {
+      "id": "BP-SEQ-057",
+      "family": "cai_weight_range_precondition",
+      "source": "Bio/SeqUtils/__init__.py",
+      "symbol": "CodonAdaptationIndex.calculate",
+      "scientific_quantity": "Sharp & Li relative synonymous codon-usage weight w_ij",
+      "precondition": "any CodonAdaptationIndex instance built via __init__ (any training-sequence iterable, any genetic-code table) and any in-frame DNA sequence accepted by calculate, observed at each codon actually looked up in the accumulation loop",
+      "invariant": "0 < self[codon] <= 1 for every codon calculate() looks up, as a direct consequence of __init__'s counts[codon] >= 0.5 pseudo-count floor and denominator = max(counts[c] for c in synonymous group) >= counts[codon]",
+      "observation_point": "inside calculate()'s accumulation loop, immediately after a successful self[codon] lookup and before log(weight) is evaluated",
+      "alarm": "the observed weight is not in the interval (0, 1 + 1e-9]",
+      "rationale": "a weight outside (0,1] contradicts the constructive definition of w_ij that __init__ itself guarantees; either log() aborts the calculation with a ValueError never surfaced to any checker, or an out-of-range weight silently pulls the reported index outside the interval the paper's definition guarantees"
     }
   ]
 }

@@ -656,6 +656,42 @@ def check_cai_hardcoded_stop_codon_set(index, sequence, result):
             trigger("BP-SEQ-055")
 
 
+@_guard("cai_sense_codon_classification_consistency")
+def check_cai_sense_codon_raise(index, codon):
+    """BP-SEQ-056: calculate() is about to raise TypeError because ``codon``
+    is neither ATG/TGG, a key of ``index``, nor one of the three literal stop
+    codons. If ``index._table.forward_table`` -- the genetic-code table this
+    same instance was built from -- calls ``codon`` a genuine sense codon,
+    the raise contradicts the instance's own declared genetic code: __init__
+    seeds every forward_table codon into ``index``, so under a
+    self-consistent instance this branch should be unreachable for any
+    codon forward_table recognizes. Reads only index/index._table and the
+    codon about to cause the raise; does not recompute CAI.
+    """
+    table = getattr(index, "_table", None)
+    if table is None:
+        return
+    forward_table = getattr(table, "forward_table", None)
+    if forward_table is None:
+        return
+    trigger_if(codon in forward_table and codon not in index, "BP-SEQ-056")
+
+
+@_guard("cai_weight_range_precondition")
+def check_cai_weight_domain(index, codon, weight):
+    """BP-SEQ-057: __init__ builds every self[codon] as
+    counts[codon] / max(counts[c] for c in synonymous group), with every
+    counts[codon] >= 0.5 (the paper's pseudo-count floor) and the
+    denominator itself one of those counts, so for any __init__-built
+    instance every weight lies in (0, 1] by construction. calculate() relies
+    on this to call log(weight) safely and to keep the reported index within
+    its documented scale. Reads the weight already looked up by production
+    code for this codon; does not recompute it.
+    """
+    tol = 1e-9
+    trigger_if(not (0.0 < weight <= 1.0 + tol), "BP-SEQ-057")
+
+
 # --- SeqUtils.GC_skew --------------------------------------------------
 
 @_guard("gc_skew")

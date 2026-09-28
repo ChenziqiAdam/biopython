@@ -669,14 +669,18 @@ class CodonAdaptationIndex(dict):
                 # Exclude these two codons as their index is always one.
                 continue
             try:
-                cai_value += log(self[codon])
+                weight = self[codon]
             except KeyError:
                 if codon in ["TGA", "TAA", "TAG"]:
                     # Stop codon, which is valid but may be missing from the index.
                     continue
+                if _scientific_checkers.enabled():
+                    _scientific_checkers.check_cai_sense_codon_raise(self, codon)
                 raise TypeError(f"illegal codon in sequence: {codon}") from None
-            else:
-                cai_length += 1
+            if _scientific_checkers.enabled():
+                _scientific_checkers.check_cai_weight_domain(self, codon, weight)
+            cai_value += log(weight)
+            cai_length += 1
 
         if _traditional_checkers.enabled():
             _traditional_checkers.check_cai_length_division(cai_length)
