@@ -490,14 +490,27 @@ def check_gravy_length(length):
 # --- motifs.matrix.PositionSpecificScoringMatrix.dist_pearson/_at -------------
 
 @_guard("pssm_dist_pearson_finite")
+def check_dist_pearson_at_denominator(denominator):
+    """BP-SWE-041 (pre-division half): ``dist_pearson_at``'s
+    ``numerator / denominator`` has no guard against a zero-variance column
+    (``denominator == sqrt((sxx - sx*sx) * (syy - sy*sy))``), which occurs
+    whenever a PSSM column's per-letter log-odds values are constant across
+    the compared positions. When every compared value is finite, this drives
+    ``denominator`` to *exactly* 0.0 and the division raises
+    ``ZeroDivisionError`` -- observed here, before the division, since a
+    checker placed after it would never be reached on this path.
+    """
+    trigger_if(denominator == 0.0, "BP-SWE-041")
+
+
+@_guard("pssm_dist_pearson_finite")
 def check_dist_pearson_at_finite(value):
-    """BP-SWE-041: ``dist_pearson_at``'s ``numerator / denominator`` has no
-    guard against a zero-variance column (``denominator ==
-    sqrt((sxx - sx*sx) * (syy - sy*sy))``), which occurs whenever a PSSM
-    column's per-letter log-odds values are constant across the compared
-    positions (e.g. a fully-conserved column, or a column containing -inf
-    log-odds from an unobserved letter). The result is a silent NaN rather
-    than a raised error or a documented sentinel.
+    """BP-SWE-041 (post-division half): the other route to the same
+    invariant violation -- a column containing -inf log-odds from an
+    unobserved letter -- produces a nonzero-but-still-degenerate
+    ``denominator`` via inf-arithmetic, so the division itself succeeds but
+    silently returns NaN rather than raising. Observed on the result,
+    complementing the pre-division check above.
     """
     trigger_if(not math.isfinite(value), "BP-SWE-041")
 

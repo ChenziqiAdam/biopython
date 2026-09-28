@@ -627,6 +627,8 @@ class PositionSpecificScoringMatrix(GenericPositionMatrix):
         syy /= norm
         numerator = sxy - sx * sy
         denominator = math.sqrt((sxx - sx * sx) * (syy - sy * sy))
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_dist_pearson_at_denominator(denominator)
         result = numerator / denominator
         if _traditional_checkers.enabled():
             _traditional_checkers.check_dist_pearson_at_finite(result)
