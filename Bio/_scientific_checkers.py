@@ -603,6 +603,59 @@ def check_cai_synonymous_monotonicity(index, sequence, result):
         return
 
 
+@_guard("cai_hardcoded_codon_weight")
+def check_cai_hardcoded_codon_weight(index, sequence, result):
+    """BP-SEQ-054: calculate() hardcodes ATG/TGG as always weight-1.0 and
+    excludes them from the table lookup and cai_length. Valid only when, for
+    this instance's table, ATG and TGG are each the sole codon for their
+    amino acid (the only case __init__'s own construction guarantees weight
+    1.0 for them). Several genetic codes Biopython ships reassign codons so
+    ATG/TGG are no longer singleton synonyms (e.g. TGA reassigned to Trp,
+    making it synonymous with TGG in several mitochondrial codes). Reads
+    sequence and the already-built index/table; does not recompute CAI.
+    """
+    text = str(sequence).upper()
+    if not text or len(text) % 3 or set(text) - set("ACGT"):
+        return
+    codons = [text[i : i + 3] for i in range(0, len(text), 3)]
+    for codon in codons:
+        if codon not in ("ATG", "TGG"):
+            continue
+        weight = index.get(codon)
+        if weight is None:
+            trigger("BP-SEQ-054")
+            continue
+        trigger_if(abs(weight - 1.0) > 1e-9, "BP-SEQ-054")
+
+
+@_guard("cai_hardcoded_stop_codon_set")
+def check_cai_hardcoded_stop_codon_set(index, sequence, result):
+    """BP-SEQ-055: calculate() classifies TGA/TAA/TAG (a hardcoded literal
+    set) as a skippable stop codon exactly when self[codon] raises
+    KeyError. This should coincide with index._table.stop_codons, the
+    table-derived stop set for this instance, and __init__ seeds every
+    codon in that set into self, so the KeyError branch should never fire
+    for a true stop codon at all under the current construction. Reads
+    sequence, index, and index._table; does not recompute CAI. Currently
+    unreachable for any of Biopython's shipped codon tables (audit note,
+    2026-09-28) -- kept per SANITIZER.md 5.7.2, would become reachable for
+    a caller-supplied custom CodonTable whose forward_table/stop_codons do
+    not jointly cover all 64 codons.
+    """
+    text = str(sequence).upper()
+    if not text or len(text) % 3 or set(text) - set("ACGT"):
+        return
+    codons = [text[i : i + 3] for i in range(0, len(text), 3)]
+    table_stops = set(index._table.stop_codons)
+    literal_stops = {"TGA", "TAA", "TAG"}
+    for codon in codons:
+        if codon in table_stops and codon not in index:
+            trigger("BP-SEQ-055")
+            continue
+        if codon in literal_stops and codon not in index and codon not in table_stops:
+            trigger("BP-SEQ-055")
+
+
 # --- SeqUtils.GC_skew --------------------------------------------------
 
 @_guard("gc_skew")

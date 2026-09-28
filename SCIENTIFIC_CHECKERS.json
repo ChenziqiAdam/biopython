@@ -470,6 +470,30 @@
       "observation_point": "a probe calling calculate() on S and on S'",
       "alarm": "calculate(S_prime) < calculate(S) - tol, tol = C*eps64*cai_length(S)*scale",
       "rationale": "CAI is defined so that more highly preferred codons score at least as well as less-preferred synonyms at the same position; a substitution to an equally- or more-preferred synonym that lowers the index means the metric no longer orders sequences consistently with its own definition of codon preference"
+    },
+    {
+      "id": "BP-SEQ-054",
+      "family": "cai_hardcoded_excluded_codon_consistency",
+      "source": "Bio/SeqUtils/__init__.py",
+      "symbol": "CodonAdaptationIndex.calculate",
+      "scientific_quantity": "codon adaptation index as a geometric mean of per-codon relative adaptiveness weights derived from the genetic-code table the instance was built with",
+      "precondition": "any CodonAdaptationIndex instance constructed via __init__ from any Bio.Data.CodonTable.CodonTable-conforming table, and any in-frame DNA sequence over ACGT containing at least one ATG or TGG codon",
+      "invariant": "whenever calculate() takes the ATG/TGG forced-weight branch for a codon c, the table weight this instance actually computed for c (self.get(c)) must equal 1.0 -- the only condition under which the class's own construction (self[codon] = counts[codon]/max(counts of the same amino-acid group)) guarantees that weight",
+      "observation_point": "in CodonAdaptationIndex.calculate, at the point the 'if codon in [\"ATG\",\"TGG\"]: continue' branch is taken; reconstructed after calculate() returns from the sequence and the already-built index",
+      "alarm": "for some ATG or TGG codon c present in the sequence, self.get(c) is missing or |self.get(c) - 1.0| > 1e-9",
+      "rationale": "the exclusion is a numerical shortcut standing in for a fact about the genetic code (Met/Trp encoded by a single codon each); several genetic codes Biopython ships reassign codons so Trp has two synonyms (e.g. TGA reassigned to Trp in several mitochondrial codes, making it synonymous with TGG). Under such a table the shortcut silently forces a codon that may be poorly represented in the reference set to score as if optimally adapted, producing a CAI that is not the geometric mean of this table's own weights"
+    },
+    {
+      "id": "BP-SEQ-055",
+      "family": "cai_hardcoded_excluded_codon_consistency",
+      "source": "Bio/SeqUtils/__init__.py",
+      "symbol": "CodonAdaptationIndex.calculate",
+      "scientific_quantity": "codon adaptation index as a geometric mean restricted to codons that genuinely contribute a synonymous-codon-usage signal under the genetic code the instance was built with",
+      "precondition": "any CodonAdaptationIndex instance constructed via __init__ from any Bio.Data.CodonTable.CodonTable-conforming table, and any in-frame DNA sequence over ACGT containing at least one codon in the literal set {TGA, TAA, TAG} or in index._table.stop_codons",
+      "invariant": "any codon that reaches calculate()'s KeyError-and-skip branch must be a true member of index._table.stop_codons for this instance, and conversely no codon in index._table.stop_codons should be absent from self in the first place, since __init__ seeds table.stop_codons as its own synonymous group during construction",
+      "observation_point": "in CodonAdaptationIndex.calculate, at the point self[codon] would raise KeyError and the codon is checked against the literal {TGA, TAA, TAG} set; reconstructed after calculate() returns from the sequence, the index, and index._table",
+      "alarm": "a codon in the sequence is a member of index._table.stop_codons but absent from self, OR a codon is a literal member of {TGA, TAA, TAG}, absent from self, and not a member of index._table.stop_codons",
+      "rationale": "the hardcoded literal set is a shortcut standing in for the table's own declared stop-codon set; several codon tables Biopython ships assign additional or different stop codons (vertebrate mitochondrial stops on AGA/AGG in addition to TAA/TAG), so a coding sequence built under such a table could in principle contain a true stop codon calculate() does not recognize as one"
     }
   ]
 }
