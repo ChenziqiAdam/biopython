@@ -546,7 +546,10 @@ class DistanceCalculator:
             max_score = max(max_score1, max_score2)
         if max_score == 0:
             return 1  # max possible scaled distance
-        return 1 - (score / max_score)
+        distance = 1 - (score / max_score)
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_pairwise_distance_range(distance)
+        return distance
 
     def get_distance(self, msa):
         """Return a DistanceMatrix for an Alignment or MultipleSeqAlignment object.

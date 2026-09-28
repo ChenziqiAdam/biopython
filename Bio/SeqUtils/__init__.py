@@ -185,6 +185,8 @@ def GC123(seq):
         gcall = gcall + d["G"][i] + d["C"][i]
         nall = nall + n
 
+    if _traditional_checkers.enabled():
+        _traditional_checkers.check_gc123_length_division(nall)
     gcall = 100.0 * gcall / nall
     return gcall, gc[0], gc[1], gc[2]
 

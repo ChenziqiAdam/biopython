@@ -513,6 +513,8 @@ class PositionSpecificScoringMatrix(GenericPositionMatrix):
         letters = self.alphabet
         for position in range(self.length):
             score += max(self[letter][position] for letter in letters)
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_pssm_max_min_order(score, self.min)
         return score
 
     @property

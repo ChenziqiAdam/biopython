@@ -2991,7 +2991,9 @@ class Alignment:
         """
         n = len(self.coordinates)
         m = self.length
-        return (n, m)
+        shape = (n, m)
+        _traditional_checkers.check_alignment_shape(len(self), m, shape)
+        return shape
 
     @property
     def aligned(self):
@@ -3190,6 +3192,7 @@ class Alignment:
                     j = i + start - end
                     row[i:j] = range(start - 1, end - 1, -1)
             i = j
+        _traditional_checkers.check_alignment_indices_shape(a.shape, self.shape)
         return a
 
     @property
@@ -4739,7 +4742,10 @@ class CodonAligner(_codonaligner.CodonAligner):
             raise ValueError(
                 "seqB must be a string, Seq, MutableSeq, or SeqRecord object"
             )
-        return super().score(sA, sB0, sB1, sB2)
+        result = super().score(sA, sB0, sB1, sB2)
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_codon_aligner_score_finite(result)
+        return result
 
     def align(self, seqA, seqB):
         """Align a nucleotide sequence to its corresponding protein sequence.

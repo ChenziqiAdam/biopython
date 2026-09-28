@@ -396,3 +396,79 @@ def check_pssm_output_finite(n, m, sequence_is_acgt, result):
     except TypeError:
         values = [result]
     trigger_if(not _all_finite(values), "BP-SWE-033")
+
+
+# --- Align.Alignment.shape / indices ------------------------------------------
+
+@_guard("alignment_shape_identity")
+def check_alignment_shape(n, m, shape):
+    """BP-SWE-034: ``Alignment.shape`` must equal exactly
+    ``(len(alignment), alignment.length)`` -- a definitional identity between
+    two independently computed properties (``__len__`` reads
+    ``len(self.coordinates)``; ``length`` walks the coordinate steps), no
+    alignment-semantics content.
+    """
+    trigger_if(tuple(shape) != (n, m), "BP-SWE-034")
+
+
+@_guard("alignment_indices_shape_identity")
+def check_alignment_indices_shape(indices_shape, alignment_shape):
+    """BP-SWE-035: ``Alignment.indices`` is documented to return an array
+    with "the same number of rows and columns as the alignment, as given by
+    self.shape" -- a shape identity stated in the property's own docstring.
+    """
+    trigger_if(tuple(indices_shape) != tuple(alignment_shape), "BP-SWE-035")
+
+
+# --- SeqUtils.GC123 -----------------------------------------------------------
+
+@_guard("gc123_zero_length_division")
+def check_gc123_length_division(nall):
+    """BP-SWE-037: ``gcall = 100.0 * gcall / nall`` divides by the total
+    A/T/G/C count across all three codon positions with no guard, unlike the
+    per-position ``gc[i]`` computation three lines above which *is* wrapped
+    in a ``try/except``. An empty (or all-ambiguous) sequence is a
+    documented-valid input -- ``GC123``'s own docstring only warns it "does
+    NOT deal with ambiguous nucleotides" correctly, not that it rejects
+    them -- and drives this specific denominator to zero while the
+    per-position one is already caught. Observed immediately before the
+    division.
+    """
+    trigger_if(nall == 0, "BP-SWE-037")
+
+
+# --- Align.CodonAligner.score -------------------------------------------------
+
+@_guard("codon_aligner_score_finite")
+def check_codon_aligner_score_finite(result):
+    """BP-SWE-036: the returned codon-alignment score must be finite for any
+    pair of sequences accepted by the input-conversion code -- the same
+    generic numeric-validity property as BP-SWE-024, on the independent
+    ``CodonAligner`` C extension rather than ``PairwiseAligner``.
+    """
+    trigger_if(not math.isfinite(result), "BP-SWE-036")
+
+
+# --- motifs.matrix.PositionSpecificScoringMatrix.max/min ----------------------
+
+@_guard("pssm_max_min_order")
+def check_pssm_max_min_order(max_value, min_value):
+    """BP-SWE-038: ``max()`` sums the per-position maximum log-odds value and
+    ``min()`` sums the per-position minimum; since max-per-position is always
+    >= min-per-position, the summed ``max()`` must be >= the summed
+    ``min()`` -- an order identity between two independently implemented
+    methods, no claim about what a "good" motif score is.
+    """
+    trigger_if(max_value < min_value, "BP-SWE-038")
+
+
+# --- Phylo.TreeConstruction.DistanceCalculator._pairwise ----------------------
+
+@_guard("distance_calculator_pairwise_range")
+def check_pairwise_distance_range(distance):
+    """BP-SWE-039: ``_pairwise``'s own docstring states it "Returns a value
+    between 0 (identical sequences) and 1 (completely different, or seq1 is
+    an empty string)" -- checking the method's own stated numeric contract,
+    not a claim about what the correct evolutionary distance is.
+    """
+    trigger_if(not (-1e-9 <= distance <= 1 + 1e-9), "BP-SWE-039")
