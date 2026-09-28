@@ -216,6 +216,8 @@ class ProteinAnalysis:
 
         total_gravy = sum(selected_scale[aa] for aa in self.sequence)
 
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_gravy_length(self.length)
         value = total_gravy / self.length
         return value
 

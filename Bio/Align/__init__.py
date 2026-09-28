@@ -3278,6 +3278,11 @@ class Alignment:
                     elif start > 0:
                         row[start - 1 :: -1] = range(i, j)
             i = j
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_inverse_indices_lengths(
+                [len(sequence) for sequence in self.sequences],
+                [len(row) for row in a],
+            )
         return a
 
     def sort(self, key=None, reverse=False):
@@ -3963,19 +3968,27 @@ class Alignment:
                     map(alphabet.index, data), dtype="i", count=len(data)
                 )
         if aligner is not None:
-            return _alignmentcounts.AlignmentCounts(
+            result = _alignmentcounts.AlignmentCounts(
                 sequences, coordinates, strands, aligner
             )
         elif wildcard is not None:
-            return _alignmentcounts.AlignmentCounts(
+            result = _alignmentcounts.AlignmentCounts(
                 sequences, coordinates, strands, wildcard
             )
         elif substitution_matrix is not None:
-            return _alignmentcounts.AlignmentCounts(
+            result = _alignmentcounts.AlignmentCounts(
                 sequences, coordinates, strands, substitution_matrix
             )
         else:
-            return _alignmentcounts.AlignmentCounts(sequences, coordinates, strands)
+            result = _alignmentcounts.AlignmentCounts(sequences, coordinates, strands)
+        if _traditional_checkers.enabled():
+            no_wildcard = wildcard is None and (
+                aligner is None or aligner.wildcard is None
+            )
+            _traditional_checkers.check_counts_identity_mismatch_partition(
+                no_wildcard, result.identities, result.mismatches, result.aligned
+            )
+        return result
 
     def reverse_complement(self):
         """Reverse-complement the alignment and return it.

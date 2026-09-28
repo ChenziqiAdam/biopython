@@ -585,6 +585,8 @@ def salt_correction(Na=0, K=0, Tris=0, Mg=0, dNTPs=0, method=1, seq=None):
                             - 8.03e-3 * math.log(mon) ** 2)
                 g = 8.31 * (0.486 - 0.258 * math.log(mon)
                             + 5.25e-3 * math.log(mon) ** 3)
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_salt_correction_log_domain(mg)
         corr = (a + b * math.log(mg) + (SeqUtils.gc_fraction(seq, "ignore"))
                 * (c + d * math.log(mg)) + (1 / (2.0 * (len(seq) - 1)))
                 * (e + f * math.log(mg) + g * math.log(mg) ** 2)) * 1e-5

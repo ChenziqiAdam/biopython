@@ -472,3 +472,86 @@ def check_pairwise_distance_range(distance):
     not a claim about what the correct evolutionary distance is.
     """
     trigger_if(not (-1e-9 <= distance <= 1 + 1e-9), "BP-SWE-039")
+
+
+# --- ProtParam.gravy -----------------------------------------------------------
+
+@_guard("gravy_length_division")
+def check_gravy_length(length):
+    """BP-SWE-040: ``value = total_gravy / self.length`` divides by the
+    sequence length with no precondition that it is nonzero -- the same
+    unguarded-division shape as BP-SWE-001's ``instability_index``, on the
+    sibling ``gravy`` method. A zero-length ``ProteinAnalysis`` is a valid
+    call through the public constructor.
+    """
+    trigger_if(length == 0, "BP-SWE-040")
+
+
+# --- motifs.matrix.PositionSpecificScoringMatrix.dist_pearson/_at -------------
+
+@_guard("pssm_dist_pearson_finite")
+def check_dist_pearson_at_finite(value):
+    """BP-SWE-041: ``dist_pearson_at``'s ``numerator / denominator`` has no
+    guard against a zero-variance column (``denominator ==
+    sqrt((sxx - sx*sx) * (syy - sy*sy))``), which occurs whenever a PSSM
+    column's per-letter log-odds values are constant across the compared
+    positions (e.g. a fully-conserved column, or a column containing -inf
+    log-odds from an unobserved letter). The result is a silent NaN rather
+    than a raised error or a documented sentinel.
+    """
+    trigger_if(not math.isfinite(value), "BP-SWE-041")
+
+
+# --- SeqUtils.MeltingTemp.salt_correction (method 7) ---------------------------
+
+@_guard("salt_correction_log_domain")
+def check_salt_correction_log_domain(mg):
+    """BP-SWE-042: method 7's final expression calls ``math.log(mg)`` twice
+    (and squares it) after the ``if Mon > 0`` branch, but ``mg`` (== ``Mg *
+    1e-3``, or the dNTP-corrected free-Mg concentration) is only guarded
+    against being zero via the *unrelated* ``mon`` check for methods 1-6;
+    method 7 has no such guard on ``mg`` itself. ``Na=K=Tris=Mg=0`` -- all
+    default values of the public API -- makes ``mon == 0`` too, but ``mon``
+    is never range-checked for method 7 (only for methods 1-6), so
+    ``math.log(mg)`` with ``mg == 0`` raises ``ValueError: math domain
+    error`` before any of this bank's method-7 length check can even help.
+    """
+    trigger_if(mg <= 0, "BP-SWE-042")
+
+
+# --- Align.Alignment.inverse_indices --------------------------------------------
+
+@_guard("alignment_inverse_indices_length_identity")
+def check_inverse_indices_lengths(sequence_lengths, array_lengths):
+    """BP-SWE-043: ``inverse_indices``'s own docstring states the returned
+    list has "the number of arrays ... equal to the number of aligned
+    sequences, and the length of each array ... equal to the length of the
+    corresponding sequence" -- a definitional length identity against
+    ``self.sequences``, independent of ``indices``/``shape`` (BP-SWE-035),
+    since ``inverse_indices`` is computed from ``self.coordinates`` and
+    ``self.sequences`` directly rather than by inverting ``indices``.
+    """
+    trigger_if(list(sequence_lengths) != list(array_lengths), "BP-SWE-043")
+
+
+# --- Align.Alignment.counts (AlignmentCounts) -----------------------------------
+
+@_guard("alignment_counts_identity_mismatch_partition")
+def check_counts_identity_mismatch_partition(no_wildcard, identities, mismatches, aligned):
+    """BP-SWE-044: ``AlignmentCounts`` (a C extension) is documented to
+    report ``identities`` as "the number of identical letters" and
+    ``mismatches`` as "the number of mismatched letters", both counted over
+    the ``aligned`` letter pairs. When no wildcard character is configured
+    (neither passed directly nor set on an aligner argument), every aligned
+    pair is by construction either identical or a mismatch, so
+    ``identities + mismatches`` must equal ``aligned`` exactly. A configured
+    wildcard character is documented to be "ignored in the calculation of
+    the number of matches, mismatches" while still counting toward
+    ``aligned``, so the identity legitimately does not hold in that case --
+    confirmed empirically via ``test_pairwise_aligner.py``'s wildcard tests,
+    which is why this precondition excludes it rather than treating it as a
+    real defect.
+    """
+    if not no_wildcard:
+        return
+    trigger_if(identities + mismatches != aligned, "BP-SWE-044")

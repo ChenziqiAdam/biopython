@@ -627,7 +627,10 @@ class PositionSpecificScoringMatrix(GenericPositionMatrix):
         syy /= norm
         numerator = sxy - sx * sy
         denominator = math.sqrt((sxx - sx * sx) * (syy - sy * sy))
-        return numerator / denominator
+        result = numerator / denominator
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_dist_pearson_at_finite(result)
+        return result
 
     def distribution(self, background=None, precision=10**3):
         """Calculate the distribution of the scores at the given precision."""
