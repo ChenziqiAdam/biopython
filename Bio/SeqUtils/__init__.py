@@ -688,6 +688,9 @@ class CodonAdaptationIndex(dict):
             _scientific_checkers.check_cai_range(self, sequence, None)
             raise
         _scientific_checkers.check_cai_range(self, sequence, result)
+        _scientific_checkers.check_cai_geometric_mean_bounds(self, sequence, result)
+        _scientific_checkers.check_cai_concatenation_additivity(self, sequence, result)
+        _scientific_checkers.check_cai_synonymous_monotonicity(self, sequence, result)
         return result
 
     def optimize(self, sequence, seq_type="DNA", strict=True):

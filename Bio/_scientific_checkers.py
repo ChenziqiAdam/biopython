@@ -467,6 +467,142 @@ def check_cai_range(index, sequence, result):
         trigger_if(opt_result < result - 1e-9, "BP-SEQ-005")
 
 
+def _cai_contributing_weights(index, sequence):
+    """Shared scan: table weights of the codons that contribute to CAI.
+
+    Mirrors calculate()'s own exclusion logic (ATG/TGG and untabulated stop
+    codons contribute nothing) so the checkers below observe exactly the
+    codon set the production code itself used, without recomputing CAI.
+    """
+    text = str(sequence).upper()
+    if not text or len(text) % 3 or set(text) - set("ACGT"):
+        return None
+    codons = [text[i:i + 3] for i in range(0, len(text), 3)]
+    weights = []
+    for codon in codons:
+        if codon in ("ATG", "TGG"):
+            continue
+        try:
+            weights.append(index[codon])
+        except KeyError:
+            if codon in ("TGA", "TAA", "TAG"):
+                continue
+            return None
+    return weights or None
+
+
+@_guard("cai_geometric_mean_bounds")
+def check_cai_geometric_mean_bounds(index, sequence, result):
+    """BP-SEQ-050: CAI is a geometric mean of the contributing codons'
+    table weights. A geometric mean of a finite set of positive numbers can
+    never fall outside the closed interval [min, max] of those numbers,
+    regardless of the table's content or the sequence's composition. A
+    reported value outside that envelope means the length-normalization or
+    the log/exp aggregation has gone wrong.
+    """
+    if result is None or not math.isfinite(result):
+        return
+    weights = _cai_contributing_weights(index, sequence)
+    if not weights:
+        return
+    lo, hi = min(weights), max(weights)
+    tol = 1e-9 * len(weights) * max(1.0, hi)
+    trigger_if(result < lo - tol or result > hi + tol, "BP-SEQ-050")
+
+
+@_guard("cai_concatenation_additivity")
+def check_cai_concatenation_additivity(index, sequence, result):
+    """BP-SEQ-051: codon boundaries are exactly preserved across
+    concatenation of two in-frame sequences, so the log-mean of the whole
+    must equal the length-weighted average of the log-means of the parts.
+    Probes the split at the sequence's own midpoint (rounded down to a
+    codon boundary) against two independent calculate() calls.
+    """
+    if result is None or not math.isfinite(result) or result <= 0.0:
+        return
+    text = str(sequence).upper()
+    if not text or len(text) % 3 or set(text) - set("ACGT"):
+        return
+    n_codons = len(text) // 3
+    if n_codons < 2:
+        return
+    split = (n_codons // 2) * 3
+    if split == 0 or split == len(text):
+        return
+    a, b = text[:split], text[split:]
+
+    weights_a = _cai_contributing_weights(index, a)
+    weights_b = _cai_contributing_weights(index, b)
+    if not weights_a or not weights_b:
+        return
+    l_a, l_b = len(weights_a), len(weights_b)
+
+    from Bio.SeqUtils import CodonAdaptationIndex  # noqa: F401
+
+    try:
+        cai_a = index.calculate(a)
+        cai_b = index.calculate(b)
+    except Exception:
+        return
+    if not (math.isfinite(cai_a) and cai_a > 0.0 and math.isfinite(cai_b) and cai_b > 0.0):
+        return
+
+    predicted_log = (l_a * math.log(cai_a) + l_b * math.log(cai_b)) / (l_a + l_b)
+    tol = 1e-9 * (l_a + l_b)
+    trigger_if(abs(math.log(result) - predicted_log) > tol, "BP-SEQ-051")
+
+
+@_guard("cai_synonymous_substitution_monotonicity")
+def check_cai_synonymous_monotonicity(index, sequence, result):
+    """BP-SEQ-053: CAI is exp(arithmetic mean of log-weights); replacing
+    one contributing codon by a synonymous codon of weakly higher table
+    weight, holding every other position fixed, cannot decrease the mean.
+    This is the entire biological point of the index (ranking sequences by
+    codon preference), so a substitution that lowers the score under this
+    condition means the index no longer orders sequences consistently with
+    its own definition.
+    """
+    if result is None or not math.isfinite(result) or result <= 0.0:
+        return
+    text = str(sequence).upper()
+    if not text or len(text) % 3 or set(text) - set("ACGT"):
+        return
+    codons = [text[i:i + 3] for i in range(0, len(text), 3)]
+
+    table = index._table
+    for i, codon in enumerate(codons):
+        if codon in ("ATG", "TGG"):
+            continue
+        try:
+            w = index[codon]
+        except KeyError:
+            continue
+        aa = table.forward_table.get(codon)
+        if aa is None:
+            continue
+        better = [
+            c for c, a in table.forward_table.items()
+            if a == aa and c in index and index[c] >= w and c != codon
+        ]
+        if not better:
+            continue
+        substitute = better[0]
+        candidate = codons[:i] + [substitute] + codons[i + 1:]
+        candidate_seq = "".join(candidate)
+
+        from Bio.SeqUtils import CodonAdaptationIndex  # noqa: F401
+
+        try:
+            substituted_result = index.calculate(candidate_seq)
+        except Exception:
+            continue
+        if not math.isfinite(substituted_result):
+            continue
+        tol = 1e-9 * max(1.0, abs(math.log(max(result, 1e-300))))
+        trigger_if(substituted_result < result - tol, "BP-SEQ-053")
+        return
+
+
 # --- SeqUtils.GC_skew --------------------------------------------------
 
 @_guard("gc_skew")
@@ -803,6 +939,103 @@ def check_qcp(reference_coords, coords, rms):
     # case at an even smaller scale hits the same QCP weakness and the probe
     # false-fires. The scale dependence remains an open upstream limitation,
     # unrelated to the argument-slot gap fixed above.
+
+
+@_guard("pdb_qcp_rotation_properness")
+def check_qcp_rotation_properness(rot):
+    """BP-PDB-020: QCP is defined as an eigen-decomposition method that
+    returns a proper rigid-body rotation, never a reflection or a shear.
+    The returned matrix must be orthogonal (rot @ rot.T == I) and
+    orientation-preserving (det(rot) == +1); any departure means the
+    transform is not a physically valid rigid motion.
+    """
+    import numpy as np
+
+    r = np.asarray(rot, dtype=float)
+    if r.shape != (3, 3):
+        return
+    orth_err = float(np.max(np.abs(r @ r.T - np.eye(3))))
+    det_err = float(abs(np.linalg.det(r) - 1.0))
+    tol = 1e-8
+    trigger_if(orth_err > tol or det_err > tol, "BP-PDB-020")
+
+
+@_guard("pdb_qcp_rmsd_optimality")
+def check_qcp_rmsd_optimality(init_rms, rms):
+    """BP-PDB-021: QCP minimizes RMSD over all rigid motions, and the
+    identity motion (no rotation/translation) is always in that search
+    space. Therefore the fitted RMSD can never exceed the RMSD of the
+    untransformed point sets; if it does, the reported fit is not
+    actually optimal.
+    """
+    scale = max(1.0, float(init_rms), float(rms))
+    tol = 1e-6 * scale
+    trigger_if(float(rms) > float(init_rms) + tol, "BP-PDB-021")
+
+
+@_guard("pdb_qcp_rmsd_cross_consistency")
+def check_qcp_rmsd_cross_consistency(reference_coords, coords, rot, tran, rms):
+    """BP-PDB-022: QCP's headline RMSD is obtained algebraically from a
+    quaternion eigenvalue, never by actually moving points. It must agree
+    with the RMSD computed directly from Euclidean distances between the
+    reference coordinates and the transformed moving coordinates -- two
+    independent representations of the same fit quality. The transform is
+    applied locally here (never via the public get_transformed(), which
+    caches into self.transformed_coords -- SANITIZER.md 5.5 forbids a
+    checker from altering persistent state).
+    """
+    import numpy as np
+
+    ref = np.asarray(reference_coords, dtype=float)
+    mov = np.asarray(coords, dtype=float)
+    r = np.asarray(rot, dtype=float)
+    t = np.asarray(tran, dtype=float)
+    if ref.shape != mov.shape or ref.shape[0] < 1 or r.shape != (3, 3):
+        return
+    moved = np.dot(mov, r) + t
+    direct_rms = float(np.sqrt(np.mean(np.sum((ref - moved) ** 2, axis=1))))
+    scale = max(1.0, float(rms), float(np.abs(ref).max()), float(np.abs(moved).max()))
+    tol = 1e-6 * scale
+    trigger_if(abs(float(rms) - direct_rms) > tol, "BP-PDB-022")
+
+
+@_guard("pdb_qcp_translation_invariance")
+def check_qcp_translation_invariance(reference_coords, coords, rot, rms):
+    """BP-PDB-023: a rigid superposition is a property of the relative
+    geometry of the two point sets, not of where in space they sit. QCP's
+    run() explicitly mean-centers both point sets before fitting, so
+    translating both by the same constant vector must not change the
+    fitted rotation, and must change the RMSD by no more than the
+    numerical-error budget of the centering subtraction.
+    """
+    import numpy as np
+
+    from Bio.PDB.qcprot import QCPSuperimposer
+
+    ref = np.asarray(reference_coords, dtype=float)
+    mov = np.asarray(coords, dtype=float)
+    if ref.shape != mov.shape or ref.shape[0] < 3:
+        return
+    r = np.asarray(rot, dtype=float)
+    if r.shape != (3, 3):
+        return
+
+    scale = float(max(np.abs(ref).max(), np.abs(mov).max(), 1.0))
+    # Keep the translation within the data's own coordinate scale so the
+    # probe stays numerically neutral (SANITIZER.md 5.8-X): an unboundedly
+    # large offset would introduce centroid-subtraction cancellation
+    # unrelated to the law under test.
+    t = np.full(3, scale, dtype=float)
+
+    shifted = QCPSuperimposer()
+    shifted.set(ref + t, mov + t)
+    shifted.run()
+
+    rot_tol = 1e-6 * (1.0 + scale)
+    rms_tol = 1e-6 * (scale + float(np.linalg.norm(t)))
+    rot_err = float(np.max(np.abs(np.asarray(shifted.rot) - r)))
+    trigger_if(rot_err > rot_tol, "BP-PDB-023")
+    trigger_if(abs(float(shifted.rms) - float(rms)) > rms_tol, "BP-PDB-023")
 
 
 # ======================================================================
