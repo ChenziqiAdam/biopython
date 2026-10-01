@@ -334,7 +334,9 @@ class QCPSuperimposer:
             _scientific_checkers.check_qcp(
                 self.reference_coords, self.coords, self.rms
             )
-            _scientific_checkers.check_qcp_rotation_properness(self.rot)
+            _scientific_checkers.check_qcp_rotation_properness(
+                self.rot, self.reference_coords
+            )
             init_rms = float(
                 np.sqrt(np.mean(np.sum((coords_ref - coords) ** 2, axis=1)))
             )

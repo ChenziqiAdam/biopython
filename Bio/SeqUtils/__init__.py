@@ -652,6 +652,8 @@ class CodonAdaptationIndex(dict):
             denominator = max(counts[codon] for codon in codons)
             for codon in codons:
                 self[codon] = counts[codon] / denominator
+        if _scientific_checkers.enabled():
+            _scientific_checkers.record_cai_construction(self)
 
     def calculate(self, sequence):
         """Calculate and return the CAI (float) for the provided DNA sequence."""

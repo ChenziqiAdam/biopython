@@ -628,6 +628,27 @@ def check_cai_hardcoded_codon_weight(index, sequence, result):
         trigger_if(abs(weight - 1.0) > 1e-9, "BP-SEQ-054")
 
 
+def record_cai_construction(index):
+    """Snapshot a CodonAdaptationIndex right after ``__init__`` finished.
+
+    BP-SEQ-055/056/057 state invariants that ``__init__`` guarantees for the
+    weights it builds. A user who then rewrites the dict (``clear()`` /
+    ``update()`` with a hand-loaded published or partial table, weights
+    computed without the pseudo-count, ...) has replaced those weights, so the
+    guarantee no longer describes the instance.
+    """
+    try:
+        index._scibench_init_snapshot = dict(index)
+    except Exception:
+        pass
+
+
+def _cai_unmodified(index):
+    """True when ``index`` still holds exactly what ``__init__`` built."""
+    snapshot = getattr(index, "_scibench_init_snapshot", None)
+    return snapshot is not None and dict(index) == snapshot
+
+
 @_guard("cai_hardcoded_stop_codon_set")
 def check_cai_hardcoded_stop_codon_set(index, sequence, result):
     """BP-SEQ-055: calculate() classifies TGA/TAA/TAG (a hardcoded literal
@@ -642,6 +663,8 @@ def check_cai_hardcoded_stop_codon_set(index, sequence, result):
     a caller-supplied custom CodonTable whose forward_table/stop_codons do
     not jointly cover all 64 codons.
     """
+    if not _cai_unmodified(index):
+        return
     text = str(sequence).upper()
     if not text or len(text) % 3 or set(text) - set("ACGT"):
         return
@@ -668,6 +691,8 @@ def check_cai_sense_codon_raise(index, codon):
     codon forward_table recognizes. Reads only index/index._table and the
     codon about to cause the raise; does not recompute CAI.
     """
+    if not _cai_unmodified(index):
+        return
     table = getattr(index, "_table", None)
     if table is None:
         return
@@ -688,6 +713,8 @@ def check_cai_weight_domain(index, codon, weight):
     its documented scale. Reads the weight already looked up by production
     code for this codon; does not recompute it.
     """
+    if not _cai_unmodified(index):
+        return
     tol = 1e-9
     trigger_if(not (0.0 < weight <= 1.0 + tol), "BP-SEQ-057")
 
@@ -900,12 +927,34 @@ def check_calc_dihedral(v1, v2, v3, v4, angle):
         and not _isclose(abs(angle), _m.pi, tol=1e-7)
     )
 
+    # The rigid-motion probe rounds every coordinate by ~1 ULP of its
+    # magnitude (eps * max|x|); relative to the shortest bond and amplified by
+    # 1/sin(theta) of the flattest triple, that is the numerical error budget
+    # of the dihedral. A fixed 1e-7 ignores the coordinate-magnitude term (a
+    # 6e5 A offset with sin(theta) ~ 2e-3 gives ~3e-8 of pure round-off, and
+    # larger still beyond). Use the larger of 1e-7 and 1e3x that budget; when
+    # the budget is itself above 1e-3 rad the comparison resolves nothing.
+    tol006 = 1e-7
+    resolvable = False
     if proper_dihedral:
+        bonds = [_np.linalg.norm(a1 - a0), _np.linalg.norm(a2 - a1),
+                 _np.linalg.norm(a3 - a2)]
+        sins = [
+            _np.linalg.norm(_np.cross(a1 - a0, a2 - a1)) / (bonds[0] * bonds[1]),
+            _np.linalg.norm(_np.cross(a2 - a1, a3 - a2)) / (bonds[1] * bonds[2]),
+        ]
+        budget = (2.220446049250313e-16 * max(float(_np.max(_np.abs(a)))
+                                              for a in (a0, a1, a2, a3))
+                  / (min(bonds) * min(sins)))
+        tol006 = max(1e-7, 1e3 * budget)
+        resolvable = tol006 < 1e-3
+
+    if resolvable:
         p = _rigid_transform(arrays)
         moved = calc_dihedral(
             Vector(p[0]), Vector(p[1]), Vector(p[2]), Vector(p[3])
         )
-        trigger_if(not _isclose(angle, moved, tol=1e-7), "BP-PDB-006")
+        trigger_if(not _isclose(angle, moved, tol=tol006), "BP-PDB-006")
 
     def mirror(v):
         a = v.get_array().copy()
@@ -1031,7 +1080,7 @@ def check_qcp(reference_coords, coords, rms):
 
 
 @_guard("pdb_qcp_rotation_properness")
-def check_qcp_rotation_properness(rot):
+def check_qcp_rotation_properness(rot, coords=None):
     """BP-PDB-020: QCP is defined as an eigen-decomposition method that
     returns a proper rigid-body rotation, never a reflection or a shear.
     The returned matrix must be orthogonal (rot @ rot.T == I) and
@@ -1042,6 +1091,13 @@ def check_qcp_rotation_properness(rot):
 
     r = np.asarray(rot, dtype=float)
     if r.shape != (3, 3):
+        return
+    # QCP forms products of the coordinates up to the sixth power; float64
+    # overflows there at coordinate magnitude ~1e26 (rot silently becomes the
+    # zero matrix). That is far outside any physical coordinate (angstroms),
+    # so it is arithmetic breakdown, not a broken rigid-motion contract. Swept:
+    # rot stays proper up to at least 1e24.
+    if coords is not None and not _magnitude_bounded([np.asarray(coords, dtype=float)]):
         return
     orth_err = float(np.max(np.abs(r @ r.T - np.eye(3))))
     det_err = float(abs(np.linalg.det(r) - 1.0))
@@ -1172,6 +1228,20 @@ def check_superimposer(fixed_coord, moving_coord, rot, tran, rms):
 
     def _rms_tol(*values):
         return 1e-9 * max(1.0, coord_scale, *(abs(v) for v in values))
+
+    # The optimal rotation is determined by the second singular value of each
+    # centred set: for a (nearly) linear molecule rotation about its axis is
+    # (nearly) undetermined, the SVD rotation is conditioned by sv[0]/sv[1],
+    # and the round-off in the probe/refit is amplified into an RMSD
+    # difference that is not a violation of the invariants below. Swept
+    # (near-linear chains, mirror/perturbed/rotated copies, 4000 trials): the
+    # first alarms appear only for sv[1]/sv[0] < ~1e-6; 1e-4 leaves margin.
+    def _rot_conditioned(x):
+        sv = np.linalg.svd(x - x.mean(axis=0), compute_uv=False)
+        return sv[0] > 0.0 and sv[1] > 1e-4 * sv[0]
+
+    if not (_rot_conditioned(ref) and _rot_conditioned(mov)):
+        return
 
     moved = np.asarray(_rigid_transform(list(mov)))
     fit_moved = _fit(ref, moved)
@@ -1354,10 +1424,19 @@ def _symmetric_scoring(aligner):
         return False
     if aligner.open_right_insertion_score != aligner.open_right_deletion_score:
         return False
+    # Swapping target and query swaps insertion and deletion, so the *extend*
+    # end-gap scores must match as well (a cheaper target-only end-gap
+    # extension is a legitimately asymmetric scheme).
+    if aligner.extend_left_insertion_score != aligner.extend_left_deletion_score:
+        return False
+    if aligner.extend_right_insertion_score != aligner.extend_right_deletion_score:
+        return False
     matrix = aligner.substitution_matrix
     if matrix is not None:
         arr = np.asarray(matrix)
-        return arr.ndim == 2 and np.allclose(arr, arr.T)
+        # Exact symmetry: an approximately symmetric matrix (np.allclose) still
+        # scores (a, b) and (b, a) differently by the asymmetry itself.
+        return arr.ndim == 2 and np.array_equal(arr, arr.T)
     return True
 
 
@@ -1413,8 +1492,8 @@ def check_aligner_score(aligner, seqA, seqB, score):
         import numpy as np
 
         transposed = matrix.transpose() if hasattr(matrix, "transpose") else None
-        if transposed is not None and np.allclose(np.asarray(matrix),
-                                                  np.asarray(transposed)):
+        if transposed is not None and np.array_equal(np.asarray(matrix),
+                                                     np.asarray(transposed)):
             # matrix.transpose() returns a non-C-contiguous view; the
             # PairwiseAligner.substitution_matrix C-extension setter rejects
             # non-contiguous arrays. Rebuilding with the same class/alphabet
