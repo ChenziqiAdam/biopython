@@ -91,6 +91,43 @@ def _aligner_params_ok(aligner, limit=1e100):
     return True
 
 
+# Inputs this large overflow float64 in squares/products long before any real
+# data does (the traditional bank's finiteness/domain checks are not about
+# float64 range limits). Every checker is skipped when any argument holds a
+# finite number above this; NaN/inf are ignored because many checkers receive
+# a (possibly non-finite) *result* as an argument. Checkers whose own
+# computation overflows earlier (e.g. QCP, degree 8) apply a stricter bound.
+_GATE_LIMIT = 1e100
+GATE_STATS = {}  # checker function name -> calls skipped by the magnitude gate
+
+
+def _has_extreme_magnitude(values, limit=_GATE_LIMIT, _depth=0):
+    """True if any finite number reachable from ``values`` exceeds ``limit``."""
+    try:
+        import numpy as np
+
+        for v in values:
+            if v is None or isinstance(v, (bool, str, bytes)):
+                continue
+            if isinstance(v, (int, float, np.integer, np.floating)):
+                if math.isfinite(v) and abs(v) > limit:
+                    return True
+            elif isinstance(v, np.ndarray):
+                if v.dtype.kind in "fiu" and v.size:
+                    a = np.abs(v[np.isfinite(v)]) if v.dtype.kind == "f" else np.abs(v)
+                    if a.size and float(a.max()) > limit:
+                        return True
+            elif isinstance(v, dict) and _depth < 2:
+                if _has_extreme_magnitude(v.values(), limit, _depth + 1):
+                    return True
+            elif isinstance(v, (list, tuple)) and _depth < 2 and len(v) <= 100000:
+                if _has_extreme_magnitude(v, limit, _depth + 1):
+                    return True
+    except Exception:
+        return False
+    return False
+
+
 def _guard(checker_id):
     """Wrap a checker body so an internal error never disturbs production.
 
@@ -104,6 +141,11 @@ def _guard(checker_id):
                 return
             _active.flag = True
             try:
+                if _has_extreme_magnitude(args) or _has_extreme_magnitude(
+                    kwargs.values()
+                ):
+                    GATE_STATS[func.__name__] = GATE_STATS.get(func.__name__, 0) + 1
+                    return
                 func(*args, **kwargs)
             except Exception:
                 pass

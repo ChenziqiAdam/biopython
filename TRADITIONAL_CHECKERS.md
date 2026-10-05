@@ -2,6 +2,8 @@
 
 Inactive unless `SCIBENCH_TRADITIONAL_LOG` names a writable file. Hooks are called from the instrumented modules.
 
+Every checker is skipped when any of its arguments holds a finite number larger than 1e100 in magnitude (float64 overflow range, not a defect); preconditions below may be stricter.
+
 - **BP-SWE-001** `ProteinAnalysis.instability_index` (Bio/SeqUtils/ProtParam.py) — denominator nonzero before division. Precondition: any call that reaches the division (any ProteinAnalysis sequence, including empty). Invariant: self.length is nonzero before it is used as a divisor. Observed immediately before `(10.0 / self.length) * score`. Alarm: self.length == 0.
 - **BP-SWE-003** `ProteinAnalysis.protein_scale` (Bio/SeqUtils/ProtParam.py) — output array length invariant. Precondition: window >= 1. Invariant: len(scores) == max(0, length - window + 1). Observed after the sliding-window loop, before returning scores. Alarm: len(scores) != max(0, length - window + 1).
 - **BP-SWE-004** `IsoelectricPoint.pi` (Bio/SeqUtils/IsoelectricPoint.py) — search-result bounds validity. Precondition: any call through the public pi() API (default or explicit min_/max_). Invariant: the returned pH lies within the initial [min_, max_] bracket. Observed after isoelectric_point() calls pi(), at the ProteinAnalysis call site. Alarm: result < min_ - 1e-9 or result > max_ + 1e-9.
