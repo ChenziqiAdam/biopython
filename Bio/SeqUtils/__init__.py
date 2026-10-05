@@ -17,6 +17,7 @@ from math import log
 from math import pi
 from math import sin
 
+from Bio import _traditional_checkers
 from Bio.Data import IUPACData
 from Bio.Data.CodonTable import standard_dna_table
 from Bio.Seq import complement
@@ -185,6 +186,8 @@ def GC123(seq):
         gcall = gcall + d["G"][i] + d["C"][i]
         nall = nall + n
 
+    if _traditional_checkers.enabled():
+        _traditional_checkers.check_gc123_length_division(nall)
     gcall = 100.0 * gcall / nall
     return gcall, gc[0], gc[1], gc[2]
 
@@ -210,6 +213,8 @@ def GC_skew(seq, window=100):
         except ZeroDivisionError:
             skew = 0.0
         values.append(skew)
+    if _traditional_checkers.enabled():
+        _traditional_checkers.check_gc_skew_finite(values)
     return values
 
 
@@ -662,6 +667,8 @@ class CodonAdaptationIndex(dict):
             else:
                 cai_length += 1
 
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_cai_length_division(cai_length)
         return exp(cai_value / cai_length)
 
     def optimize(self, sequence, seq_type="DNA", strict=True):

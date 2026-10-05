@@ -20,6 +20,8 @@ from Bio.Seq import Seq
 
 from . import _pwm  # type: ignore
 
+from Bio import _traditional_checkers
+
 
 class GenericPositionMatrix(dict):
     """Base class for the support of position matrix operations."""
@@ -439,6 +441,8 @@ class PositionSpecificScoringMatrix(GenericPositionMatrix):
 
         n = len(sequence)
         m = self.length
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_pssm_short_sequence(n, m)
         # Create the numpy arrays here; the C module then does not rely on numpy
         # Use a float32 for the scores array to save space
         scores = np.empty(n - m + 1, np.float32)
@@ -450,7 +454,16 @@ class PositionSpecificScoringMatrix(GenericPositionMatrix):
         if len(scores) == 1:
             return scores[0]
         else:
-            return scores
+            result = scores
+
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_pssm_output_shape(n, m, scores)
+            _sci_acgt = set(sequence.upper()) <= {65, 67, 71, 84}  # b"ACGT"
+            _traditional_checkers.check_pssm_output_finite(
+                n, m, _sci_acgt, result
+            )
+
+        return result
 
     def search(self, sequence, threshold=0.0, both=True, chunksize=10**6):
         """Find hits with PWM score above given threshold.
@@ -495,6 +508,8 @@ class PositionSpecificScoringMatrix(GenericPositionMatrix):
         letters = self.alphabet
         for position in range(self.length):
             score += max(self[letter][position] for letter in letters)
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_pssm_max_min_order(score, self.min)
         return score
 
     @property
@@ -607,7 +622,12 @@ class PositionSpecificScoringMatrix(GenericPositionMatrix):
         syy /= norm
         numerator = sxy - sx * sy
         denominator = math.sqrt((sxx - sx * sx) * (syy - sy * sy))
-        return numerator / denominator
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_dist_pearson_at_denominator(denominator)
+        result = numerator / denominator
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_dist_pearson_at_finite(result)
+        return result
 
     def distribution(self, background=None, precision=10**3):
         """Calculate the distribution of the scores at the given precision."""

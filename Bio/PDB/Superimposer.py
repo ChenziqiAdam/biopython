@@ -9,6 +9,7 @@
 
 import numpy as np
 
+from Bio import _traditional_checkers
 from Bio.PDB.PDBExceptions import PDBException
 from Bio.SVDSuperimposer import SVDSuperimposer
 
@@ -44,6 +45,12 @@ class Superimposer:
         sup.run()
         self.rms = sup.get_rms()
         self.rotran = sup.get_rotran()
+
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_superimposer_shape(
+                self.rotran[0], self.rotran[1]
+            )
+            _traditional_checkers.check_superimposer_rms_finite(self.rms)
 
     def apply(self, atom_list):
         """Rotate/translate a list of atoms."""

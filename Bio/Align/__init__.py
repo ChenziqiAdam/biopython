@@ -33,6 +33,7 @@ except ImportError:
     ) from None
 
 from Bio import BiopythonDeprecationWarning
+from Bio import _traditional_checkers
 from Bio.Align import _aligncore  # type: ignore
 from Bio.Align import _codonaligner  # type: ignore
 from Bio.Align import _pairwisealigner  # type: ignore
@@ -2989,7 +2990,9 @@ class Alignment:
         """
         n = len(self.coordinates)
         m = self.length
-        return (n, m)
+        shape = (n, m)
+        _traditional_checkers.check_alignment_shape(len(self), m, shape)
+        return shape
 
     @property
     def aligned(self):
@@ -3188,6 +3191,7 @@ class Alignment:
                     j = i + start - end
                     row[i:j] = range(start - 1, end - 1, -1)
             i = j
+        _traditional_checkers.check_alignment_indices_shape(a.shape, self.shape)
         return a
 
     @property
@@ -3273,6 +3277,11 @@ class Alignment:
                     elif start > 0:
                         row[start - 1 :: -1] = range(i, j)
             i = j
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_inverse_indices_lengths(
+                [len(sequence) for sequence in self.sequences],
+                [len(row) for row in a],
+            )
         return a
 
     def sort(self, key=None, reverse=False):
@@ -3958,19 +3967,27 @@ class Alignment:
                     map(alphabet.index, data), dtype="i", count=len(data)
                 )
         if aligner is not None:
-            return _alignmentcounts.AlignmentCounts(
+            result = _alignmentcounts.AlignmentCounts(
                 sequences, coordinates, strands, aligner
             )
         elif wildcard is not None:
-            return _alignmentcounts.AlignmentCounts(
+            result = _alignmentcounts.AlignmentCounts(
                 sequences, coordinates, strands, wildcard
             )
         elif substitution_matrix is not None:
-            return _alignmentcounts.AlignmentCounts(
+            result = _alignmentcounts.AlignmentCounts(
                 sequences, coordinates, strands, substitution_matrix
             )
         else:
-            return _alignmentcounts.AlignmentCounts(sequences, coordinates, strands)
+            result = _alignmentcounts.AlignmentCounts(sequences, coordinates, strands)
+        if _traditional_checkers.enabled():
+            no_wildcard = wildcard is None and (
+                aligner is None or aligner.wildcard is None
+            )
+            _traditional_checkers.check_counts_identity_mismatch_partition(
+                no_wildcard, result.identities, result.mismatches, result.aligned
+            )
+        return result
 
     def reverse_complement(self):
         """Reverse-complement the alignment and return it.
@@ -4550,7 +4567,10 @@ AlignmentCounts object returned by the .counts method of an Alignment object."""
                 seqB = np.fromiter(
                     map(alphabet.index, seqB), dtype=np.int32, count=len(seqB)
                 )
-        return super().score(seqA, seqB, strand)
+        result = super().score(seqA, seqB, strand)
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_aligner_score_finite(result)
+        return result
 
     def __getstate__(self):
         state = {
@@ -4725,7 +4745,10 @@ class CodonAligner(_codonaligner.CodonAligner):
             raise ValueError(
                 "seqB must be a string, Seq, MutableSeq, or SeqRecord object"
             )
-        return super().score(sA, sB0, sB1, sB2)
+        result = super().score(sA, sB0, sB1, sB2)
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_codon_aligner_score_finite(result)
+        return result
 
     def align(self, seqA, seqB):
         """Align a nucleotide sequence to its corresponding protein sequence.

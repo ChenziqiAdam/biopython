@@ -52,6 +52,7 @@ Other public methods are:
 import functools
 import sys
 
+from Bio import _traditional_checkers
 from Bio.Data import IUPACData
 from Bio.Seq import Seq
 from Bio.SeqUtils import IsoelectricPoint  # Local
@@ -151,7 +152,10 @@ class ProteinAnalysis:
             dipeptide_value = index[this][next]
             score += dipeptide_value
 
-        return (10.0 / self.length) * score
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_instability_index_length(self.length)
+        instability = (10.0 / self.length) * score
+        return instability
 
     def flexibility(self):
         """Calculate the flexibility according to Vihinen, 1994.
@@ -200,7 +204,10 @@ class ProteinAnalysis:
 
         total_gravy = sum(selected_scale[aa] for aa in self.sequence)
 
-        return total_gravy / self.length
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_gravy_length(self.length)
+        value = total_gravy / self.length
+        return value
 
     def _weight_list(self, window, edge):
         """Make list of relative weight of window edges (PRIVATE).
@@ -290,6 +297,10 @@ class ProteinAnalysis:
 
             scores.append(score / sum_of_weights)
 
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_protein_scale_shape(
+                self.length, window, scores
+            )
         return scores
 
     def isoelectric_point(self):
@@ -300,7 +311,10 @@ class ProteinAnalysis:
         aa_content = self.count_amino_acids()
 
         ie_point = IsoelectricPoint.IsoelectricPoint(self.sequence, aa_content)
-        return ie_point.pi()
+        point = ie_point.pi()
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_pi_bracket_bounds(4.05, 12, point)
+        return point
 
     def charge_at_pH(self, pH):
         """Calculate the charge of a protein at given pH."""

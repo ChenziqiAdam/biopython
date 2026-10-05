@@ -23,6 +23,8 @@ I designed the algorithm according to a note by David L. Tabb, available at:
 http://fields.scripps.edu/DTASelect/20010710-pI-Algorithm.pdf
 """
 
+from Bio import _traditional_checkers
+
 positive_pKs = {"Nterm": 7.5, "K": 10.0, "R": 12.0, "H": 5.98}
 negative_pKs = {"Cterm": 3.55, "D": 4.05, "E": 4.45, "C": 9.0, "Y": 10.0}
 pKcterminal = {"D": 4.55, "E": 4.75}
@@ -120,17 +122,25 @@ class IsoelectricPoint:
         #       [A-]/[A]total = [A-]/([A-] + [HA]) = 1 / { ([A-] + [HA])/[A-] } =
         #       1 / (1 + [HA]/[A-]) = 1 / (1 + 10 ** (pKa - pH)) for acidic residues;
         #                             1 / (1 + 10 ** (pH - pKa)) for basic residues
-        positive_charge = 0.0
-        for aa, pK in self.pos_pKs.items():
-            partial_charge = 1.0 / (10 ** (pH - pK) + 1.0)
-            positive_charge += self.charged_aas_content[aa] * partial_charge
+        try:
+            positive_charge = 0.0
+            for aa, pK in self.pos_pKs.items():
+                partial_charge = 1.0 / (10 ** (pH - pK) + 1.0)
+                positive_charge += self.charged_aas_content[aa] * partial_charge
 
-        negative_charge = 0.0
-        for aa, pK in self.neg_pKs.items():
-            partial_charge = 1.0 / (10 ** (pK - pH) + 1.0)
-            negative_charge += self.charged_aas_content[aa] * partial_charge
+            negative_charge = 0.0
+            for aa, pK in self.neg_pKs.items():
+                partial_charge = 1.0 / (10 ** (pK - pH) + 1.0)
+                negative_charge += self.charged_aas_content[aa] * partial_charge
+        except OverflowError:
+            if _traditional_checkers.enabled():
+                _traditional_checkers.check_charge_finite(pH, float("inf"))
+            raise
 
-        return positive_charge - negative_charge
+        charge = positive_charge - negative_charge
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_charge_finite(pH, charge)
+        return charge
 
     # This is the action function, it tries different pH until the charge of
     # the protein is 0 (or close).

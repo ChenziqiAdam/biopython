@@ -23,6 +23,7 @@ Epub 2005 Jun 23. PMID: 15973002.
 
 import numpy as np
 
+from Bio import _traditional_checkers
 from Bio.PDB.PDBExceptions import PDBException
 
 
@@ -327,6 +328,10 @@ class QCPSuperimposer:
 
         (self.rms, self.rot, _) = qcp(coords_ref, coords, self._natoms)
         self.tran = com_ref - np.dot(com_coords, self.rot)
+
+        if _traditional_checkers.enabled():
+            _traditional_checkers.check_qcp_natoms(self._natoms, self.rms)
+            _traditional_checkers.check_qcp_rms_finite(self._natoms, self.rms)
 
     # Getters
     def get_transformed(self):
