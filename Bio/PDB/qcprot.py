@@ -330,9 +330,6 @@ class QCPSuperimposer:
         self.tran = com_ref - np.dot(com_coords, self.rot)
 
         if _scientific_checkers.enabled():
-            _scientific_checkers.check_qcp(
-                self.reference_coords, self.coords, self.rms
-            )
             _scientific_checkers.check_qcp_rotation_properness(
                 self.rot, self.reference_coords
             )

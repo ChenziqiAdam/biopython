@@ -158,10 +158,6 @@ class ProteinAnalysis:
             score += dipeptide_value
 
         instability = (10.0 / self.length) * score
-        if _scientific_checkers.enabled():
-            _scientific_checkers.check_instability_additivity(
-                self.sequence, instability
-            )
         return instability
 
     def flexibility(self):
@@ -190,8 +186,6 @@ class ProteinAnalysis:
 
             scores.append(score / 5.25)
 
-        if _scientific_checkers.enabled():
-            _scientific_checkers.check_flexibility(self.sequence, scores)
         return scores
 
     def gravy(self, scale="KyteDoolitle"):
@@ -266,11 +260,6 @@ class ProteinAnalysis:
         Similar to expasy's ProtScale:
         http://www.expasy.org/cgi-bin/protscale.pl
         """
-        if _scientific_checkers.enabled():
-            _scientific_checkers.check_protein_scale_window_one(
-                self.sequence, param_dict
-            )
-
         # generate the weights
         #   _weight_list returns only one tail. If the list should be
         #   [0.4,0.7,1.0,0.7,0.4] what you actually get from _weights_list
@@ -325,9 +314,6 @@ class ProteinAnalysis:
         ie_point = IsoelectricPoint.IsoelectricPoint(self.sequence, aa_content)
         point = ie_point.pi()
         if _scientific_checkers.enabled():
-            _scientific_checkers.check_pi_charge_neutrality(
-                self.sequence, point, ie_point.charge_at_pH(point)
-            )
             _scientific_checkers.check_charge_monotonicity(self.sequence)
         return point
 

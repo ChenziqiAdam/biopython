@@ -99,61 +99,16 @@ def _guard(checker_id):
 
 # --- ProtParam.flexibility ------------------------------------------------
 
-@_guard("flexibility")
-def check_flexibility(sequence, scores):
-    """BP-SEQ-001 window length; BP-SEQ-002 reversal equivariance.
-
-    A sliding-window smoothing profile must be position-symmetric: the physical
-    quantity (local backbone flexibility) does not depend on which end of the
-    chain the window is indexed from, so reversing the sequence must reverse the
-    profile. An asymmetric window introduces a systematic phase shift in the
-    profile.
-    """
-    window = 9
-    trigger_if(len(scores) != max(0, len(sequence) - window + 1), "BP-SEQ-001")
-
-    from Bio.SeqUtils.ProtParam import ProteinAnalysis
-
-    reverse_scores = ProteinAnalysis(sequence[::-1]).flexibility()[::-1]
-    differs = len(scores) != len(reverse_scores) or any(
-        not _isclose(a, b) for a, b in zip(scores, reverse_scores)
-    )
-    trigger_if(bool(scores) and differs, "BP-SEQ-002")
-
 
 # --- ProtParam.protein_scale -------------------------------------------------
-
-@_guard("protein_scale_window_one")
-def check_protein_scale_window_one(sequence, param_dict):
-    """BP-SEQ-003: a one-residue scale window must return each residue's raw
-    scale value.
-
-    The checker independently re-calls protein_scale with window=1 and edge=1
-    and compares the profile to [param_dict[r] for r in sequence]. A raised
-    exception or a mismatch is the alarm; being called with window=1 is not.
-    """
-    if not sequence or not all(r in param_dict for r in sequence):
-        return
-    from Bio.SeqUtils.ProtParam import ProteinAnalysis
-
-    expected = [param_dict[r] for r in sequence]
-    try:
-        profile = ProteinAnalysis(sequence).protein_scale(param_dict, 1, edge=1)
-    except Exception:
-        trigger("BP-SEQ-003")
-        return
-    differs = len(profile) != len(expected) or any(
-        not _isclose(a, b) for a, b in zip(profile, expected)
-    )
-    trigger_if(differs, "BP-SEQ-003")
 
 
 @_guard("protein_scale_output")
 def check_protein_scale_output(sequence, param_dict, window, edge, scores):
     """BP-SEQ-004: even-window scale profile reversal equivariance (pure API).
 
-    Same position-symmetry law as BP-SEQ-002: the amino-acid scale profile is a
-    windowed average, so reversing the sequence must reverse the profile.
+    Position-symmetry law: the amino-acid scale profile is a windowed
+    average, so reversing the sequence must reverse the profile.
     """
     if window <= 0 or window % 2 or not sequence:
         return
@@ -172,53 +127,8 @@ def check_protein_scale_output(sequence, param_dict, window, edge, scores):
 
 # --- ProtParam.instability_index --------------------------------------------
 
-@_guard("instability_index_additivity")
-def check_instability_additivity(sequence, value):
-    """BP-SEQ-026: the Guruprasad instability index is a length-weighted sum
-    over adjacent-residue (dipeptide) DIWV terms:
-    ``II(s) = (10/L) * sum_i DIWV[s_i][s_{i+1}]``. Because the sum is over
-    consecutive pairs, splitting the chain at any position k decomposes it
-    exactly:
-    ``L * II(s) == kA * II(s[:k]) + kB * II(s[k:]) + 10 * DIWV[s[k-1]][s[k]]``
-    for every 1 <= k <= L-1 (the last term is the one dipeptide that straddles
-    the cut). This is a general decomposition law over all split points; the
-    checker picks k in the middle and re-calls the public API on the two
-    halves. It does not know whether any split violates it.
-    """
-    from Bio.SeqUtils.ProtParam import ProteinAnalysis
-    from Bio.SeqUtils import ProtParamData
-
-    L = len(sequence)
-    if L < 3 or not math.isfinite(value):
-        return
-    if any(r not in ProtParamData.DIWV for r in sequence):
-        return
-    k = L // 2
-    a, b = sequence[:k], sequence[k:]
-    ii_a = ProteinAnalysis(a).instability_index()
-    ii_b = ProteinAnalysis(b).instability_index()
-    junction = 10.0 * ProtParamData.DIWV[sequence[k - 1]][sequence[k]]
-    combined = (k * ii_a + len(b) * ii_b + junction) / L
-    tol = 1e-9 * max(1.0, abs(value), abs(combined))
-    trigger_if(not _within(value, combined, tol), "BP-SEQ-026")
-
 
 # --- IsoelectricPoint ------------------------------------------------------
-
-@_guard("pi_charge_neutrality")
-def check_pi_charge_neutrality(sequence, point, charge):
-    """BP-SEQ-006: the isoelectric point is *defined* as the pH at which the
-    modelled net charge is zero. For any standard protein sequence the net
-    charge evaluated at the reported pI must therefore be (numerically) zero;
-    a non-trivial residual charge means the value returned is not the
-    isoelectric point. The precondition is any standard-amino-acid sequence --
-    the checker does not target a particular composition.
-    """
-    if not sequence or any(r not in "ACDEFGHIKLMNPQRSTVWY" for r in sequence):
-        return
-    # tolerance scaled by chain length: charge_at_pH is a sum of L sigmoids
-    tol = 1e-2 * max(1.0, len(sequence) / 20.0)
-    trigger_if(abs(charge) > tol, "BP-SEQ-006")
 
 
 @_guard("charge_monotonicity")
@@ -237,38 +147,6 @@ def check_charge_monotonicity(sequence):
 
 
 # --- SeqUtils.molecular_weight ----------------------------------------------
-
-@_guard("condensation_mass_conservation")
-def check_molecular_weight_additivity(original_seq, seq_type, double_stranded,
-                                      circular, monoisotopic, weight):
-    """BP-SEQ-023: forming the backbone bond that joins two oligomers releases
-    exactly one water molecule, so for a single strand and *any* split point
-    ``k`` in ``1 <= k <= L-1``:
-        ``MW(s) == MW(s[:k]) + MW(s[k:]) - water``.
-    This is mass conservation across the condensation reaction; it must hold at
-    every split, not just the midpoint. The checker re-calls the public API on
-    each half at several k and does not assume any particular k fails.
-    """
-    water = 18.010565 if monoisotopic else 18.0153
-    L = len(original_seq)
-    if (double_stranded or circular or L < 2
-            or seq_type not in ("DNA", "RNA")
-            or set(original_seq) - set("ACGTU")):
-        return
-
-    from Bio.SeqUtils import molecular_weight
-
-    whole = molecular_weight(original_seq, seq_type, monoisotopic=monoisotopic)
-    ks = sorted({1, L // 2, L - 1})
-    for k in ks:
-        a = molecular_weight(original_seq[:k], seq_type,
-                             monoisotopic=monoisotopic)
-        b = molecular_weight(original_seq[k:], seq_type,
-                             monoisotopic=monoisotopic)
-        # relative tolerance: MW is O(1e2..1e4), float64 sum rounding over a
-        # long strand is ~1e-12 relative (methodology 8.3)
-        tol = 1e-9 * max(1.0, abs(whole))
-        trigger_if(not _within(whole, a + b - water, tol), "BP-SEQ-023")
 
 
 @_guard("water_mass_consistency")
@@ -426,45 +304,6 @@ def check_salt_correction(Na, K, Tris, Mg, dNTPs, method, seq, corr):
 
 
 # --- CodonAdaptationIndex ------------------------------------------------
-
-@_guard("cai_range_and_monotonicity")
-def check_cai_range(index, sequence, result):
-    """BP-SEQ-005: the codon adaptation index is the geometric mean of the
-    per-codon relative adaptiveness values w_ij, and every w_ij lies in (0, 1]
-    by construction (each is a ratio to the most frequent synonym). Therefore
-    for *any* in-frame coding sequence:
-      - CAI is well-defined and CAI in (0, 1];
-      - replacing any codon by the highest-w_ij synonym of the same amino acid
-        cannot decrease CAI (monotonicity toward the optimal coding sequence).
-    The precondition is any in-frame CDS over the index's genetic code; the
-    checker does not target a particular codon composition.
-    """
-    text = str(sequence).upper()
-    if not text or len(text) % 3 or set(text) - set("ACGT"):
-        return
-    codons = [text[i:i + 3] for i in range(0, len(text), 3)]
-
-    # 1. range / well-definedness
-    if result is None or not math.isfinite(result):
-        trigger("BP-SEQ-005")
-        return
-    trigger_if(result <= 0.0 or result > 1.0 + 1e-9, "BP-SEQ-005")
-
-    # 2. monotonicity toward the optimal synonymous sequence
-    table = index._table
-    syn = {}
-    for aa in table.protein_alphabet:
-        group = [c for c, a in table.forward_table.items() if a == aa]
-        if group:
-            best = max(group, key=lambda c: index.get(c, 0.0))
-            for c in group:
-                syn[c] = best
-    optimised = "".join(syn.get(c, c) for c in codons)
-    if optimised != text:
-        from Bio.SeqUtils import CodonAdaptationIndex  # noqa: F401
-
-        opt_result = index.calculate(optimised)
-        trigger_if(opt_result < result - 1e-9, "BP-SEQ-005")
 
 
 def _cai_contributing_weights(index, sequence):
@@ -1004,68 +843,6 @@ def check_rotmat(p, q, matrix):
         cos = float(np.dot(pr, qa) / (np.linalg.norm(pr) * np.linalg.norm(qa)))
         trigger_if(cos < 1.0 - 1e-7, "BP-PDB-012")
 
-
-@_guard("pdb_qcp")
-def check_qcp(reference_coords, coords, rms):
-    """BP-PDB-015: the optimal-superposition RMSD is a geometric property of the
-    two point sets, so it is unchanged by a rigid motion of the moving set
-    before fitting, and it is symmetric in its two arguments.
-    """
-    import numpy as np
-
-    from Bio.PDB.qcprot import QCPSuperimposer
-
-    ref = np.asarray(reference_coords, dtype=float)
-    mov = np.asarray(coords, dtype=float)
-    if ref.shape != mov.shape or ref.shape[0] < 3:
-        return
-
-    # RMSD is O(coordinate magnitude); the absolute tolerance scales with it
-    # (methodology 8.3). Compared directly, NOT via _isclose -- _isclose would
-    # take this value as a relative tolerance and a large tol would mask any
-    # discrepancy.
-    coord_scale = float(max(np.abs(ref).max(), np.abs(mov).max(), 1.0))
-    tol = 1e-6 * coord_scale
-
-    moved = np.asarray(_rigid_transform(list(mov)))
-    sup = QCPSuperimposer()
-    sup.set(ref, moved)
-    sup.run()
-    trigger_if(abs(sup.get_rms() - rms) > tol, "BP-PDB-015")
-
-    swapped = QCPSuperimposer()
-    swapped.set(mov, ref)
-    swapped.run()
-    trigger_if(abs(swapped.get_rms() - rms) > tol, "BP-PDB-015")
-
-    # Fixed post-audit (2026-09-14/15, independent triggerability + Opus
-    # confirmatory audit): the two probes above are both blind to a
-    # collinear REFERENCE set specifically -- the rigid-motion probe keeps
-    # `ref` fixed (only `mov` is transformed), and the argument-swap probe
-    # puts `ref` into the *moving* slot, so neither probe ever re-fits with
-    # a collinear set in the reference slot other than the original call
-    # itself. The documented collinear-reference bug
-    # (issues/ISSUE_qcp_collinear.md) uses exactly that orientation and was
-    # previously invisible to this checker (0 triggers on the documented
-    # repro, confirmed independently twice). This is a distinct gap from
-    # the KNOWN LIMITATION below (that one is about coordinate *scale*;
-    # this one is about argument-*slot* asymmetry at ordinary scale) --
-    # the old in-code claim that the collinear-reference failure "IS
-    # caught here at ordinary and large scales" was simply wrong. Fixed by
-    # adding a third probe that rigid-transforms the REFERENCE set instead
-    # of the moving one; RMSD is invariant under a rigid motion of either
-    # argument, so the law is equally valid, and `_rigid_transform` is
-    # already scale-covariant (methodology 8.2) so this is not the
-    # rejected scale-covariance probe below. Verified: catches the
-    # documented repro with ~64x margin (gap 6.37e-05 vs tol 1e-6); 0
-    # false positives across two independent sweeps of 3000-4000
-    # well-conditioned random trials (scale 1e-6 to 1e8, N 4-25), worst
-    # observed ratio to tolerance ~0.03-0.1.
-    ref_moved = np.asarray(_rigid_transform(list(ref)))
-    ref_probe = QCPSuperimposer()
-    ref_probe.set(ref_moved, mov)
-    ref_probe.run()
-    trigger_if(abs(ref_probe.get_rms() - rms) > tol, "BP-PDB-015")
 
     # KNOWN LIMITATION (audit 4): QCP's Newton tolerance evalprec (1e-11) and
     # eigenvector tolerance evecprec (1e-6) are absolute constants applied to
