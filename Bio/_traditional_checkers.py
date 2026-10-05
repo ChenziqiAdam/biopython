@@ -55,6 +55,42 @@ def _all_finite(values):
     return all(math.isfinite(v) for v in values)
 
 
+def _magnitudes_ok(*values, limit=1e100):
+    """True when every given number/array is finite and at most ``limit`` in
+    magnitude (None is ignored). Beyond this, products and sums of squares
+    overflow float64 -- a floating-point limit, not a missing guard."""
+    import numpy as np
+
+    for value in values:
+        if value is None:
+            continue
+        arr = np.asarray(value, dtype=float)
+        if arr.size and not (np.all(np.isfinite(arr)) and np.max(np.abs(arr)) <= limit):
+            return False
+    return True
+
+
+def _aligner_params_ok(aligner, limit=1e100):
+    """True when every numeric scoring parameter of a PairwiseAligner /
+    CodonAligner (and its substitution matrix) is finite and at most
+    ``limit`` in magnitude."""
+    for name in dir(aligner):
+        if name.startswith("_") or "score" not in name:
+            continue
+        try:
+            value = getattr(aligner, name)
+        except Exception:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if not _magnitudes_ok(value, limit=limit):
+            return False
+    matrix = getattr(aligner, "substitution_matrix", None)
+    if matrix is not None and not _magnitudes_ok(matrix, limit=limit):
+        return False
+    return True
+
+
 def _guard(checker_id):
     """Wrap a checker body so an internal error never disturbs production.
 
@@ -129,8 +165,12 @@ def check_charge_finite(pH, charge):
     ``pi()``'s bounded bisection). The resulting partial charge would then
     silently collapse to 0 rather than raise or stay a well-defined float.
     Checks only that the returned charge is finite -- no claim about the
-    correct titration curve.
+    correct titration curve. A pH outside [-250, 250] (physical pH is about
+    0-14) overflows ``10 ** (pH - pK)`` in float64 by construction, a
+    floating-point limit rather than a missing guard, and is excluded.
     """
+    if not (math.isfinite(pH) and abs(pH) <= 250.0):
+        return
     trigger_if(not math.isfinite(charge), "BP-SWE-005")
 
 
@@ -201,12 +241,16 @@ def check_tm_nn_log_domain(dnac1, dnac2, selfcomp):
 
 
 @_guard("tm_nn_denominator_finite")
-def check_tm_nn_result_finite(melting_temp):
+def check_tm_nn_result_finite(melting_temp, delta_h=0.0, delta_s=0.0):
     """BP-SWE-014: ``melting_temp = (1000*delta_h) / (delta_s + R*log(k))``
     and, for saltcorr in (6, 7), a further ``1 / (1/(melting_temp+273.15) +
     corr)`` -- both denominators are sums of independently varying terms with
     no stated nonzero guarantee. Checks only that the final result is finite.
+    A non-finite or astronomically large (|value| > 1e100) enthalpy or
+    entropy is a floating-point limit and is excluded.
     """
+    if not _magnitudes_ok(delta_h, delta_s):
+        return
     trigger_if(not math.isfinite(melting_temp), "BP-SWE-014")
 
 
@@ -275,9 +319,13 @@ def check_superimposer_shape(rot, tran):
 
 
 @_guard("superimposer_rms_finite")
-def check_superimposer_rms_finite(rms):
+def check_superimposer_rms_finite(rms, fixed=None, moving=None):
     """BP-SWE-021: ``self.rms`` must be a finite float -- a generic
-    numeric-validity guard, no claim about RMSD correctness."""
+    numeric-validity guard, no claim about RMSD correctness. Coordinates
+    larger than 1e100 in magnitude overflow the sum of squares: a
+    floating-point limit, excluded."""
+    if not _magnitudes_ok(fixed, moving):
+        return
     trigger_if(not math.isfinite(rms), "BP-SWE-021")
 
 
@@ -293,21 +341,29 @@ def check_qcp_natoms(natoms, rms):
 
 
 @_guard("qcp_rms_finite")
-def check_qcp_rms_finite(natoms, rms):
+def check_qcp_rms_finite(natoms, rms, coords=None, coords_ref=None):
     """BP-SWE-023: for a non-empty input, ``self.rms`` must still be a
     finite float -- same generic property as BP-SWE-021, independent code
-    path (the QCP algorithm rather than classical SVD)."""
+    path (the QCP algorithm rather than classical SVD). The characteristic
+    polynomial is degree 8 in the coordinates, so coordinates above 1e30 in
+    magnitude overflow float64: a floating-point limit, excluded."""
+    if not _magnitudes_ok(coords, coords_ref, limit=1e30):
+        return
     trigger_if(natoms > 0 and not math.isfinite(rms), "BP-SWE-023")
 
 
 # --- Align.PairwiseAligner -----------------------------------------------------
 
 @_guard("aligner_score_finite")
-def check_aligner_score_finite(result):
+def check_aligner_score_finite(aligner, result):
     """BP-SWE-024: the returned alignment score must be finite for any pair
     of sequences accepted by the input-conversion code -- pure numeric
     validity of the C scoring routine's output, no alignment-semantics
-    content."""
+    content. Scoring parameters that are infinite (a documented way to
+    forbid gaps) or above 1e100 in magnitude make an infinite score
+    legitimate or overflow float64, and are excluded."""
+    if not _aligner_params_ok(aligner):
+        return
     trigger_if(not math.isfinite(result), "BP-SWE-024")
 
 
@@ -339,12 +395,18 @@ def check_tree_leaf_names(names, tree):
 
 
 @_guard("upgma_intermediate_matrix_finite")
-def check_upgma_matrix_finite(distance_matrix):
+def check_upgma_matrix_finite(distance_matrix, original=None):
     """BP-SWE-030: the working distance matrix must never contain NaN/Inf
     after an averaging update step -- a generic numeric-validity check on
     intermediate state, independent of tree quality.
     """
-    for row in distance_matrix.matrix:
+    rows = distance_matrix.matrix
+    # Input distances that are non-finite or above 1e100 overflow when
+    # averaged: a floating-point limit.
+    source = original if original is not None else distance_matrix
+    if not _magnitudes_ok(*source.matrix):
+        return
+    for row in rows:
         if not _all_finite(row):
             trigger("BP-SWE-030")
             return
@@ -359,8 +421,10 @@ def check_pssm_short_sequence(n, m):
     is non-positive. Observed immediately before the allocation: a
     documented "sequence" input class includes sequences shorter than the
     motif, since ``calculate`` states no minimum-length precondition.
+    ``n == m - 1`` requests an empty array, which is valid (the result is an
+    empty score array); only ``n < m - 1`` asks for a negative size.
     """
-    trigger_if(n < m, "BP-SWE-031")
+    trigger_if(n < m - 1, "BP-SWE-031")
 
 
 @_guard("pssm_output_shape")
@@ -388,6 +452,9 @@ def check_pssm_output_finite(n, m, sequence_is_acgt, result):
     unwritten element (e.g. from a future early-exit bug in the C routine)
     would otherwise leak uninitialized memory rather than a documented NaN;
     this guards memory-initialization discipline, not scoring correctness.
+    ``sequence_is_acgt`` also requires every log-odds entry of the PSSM to be
+    finite: with zero pseudocounts a never-seen letter has log-odds -inf, so
+    a -inf score is the correct value, not a defect.
     """
     if n < m or not sequence_is_acgt:
         return
@@ -440,12 +507,15 @@ def check_gc123_length_division(nall):
 # --- Align.CodonAligner.score -------------------------------------------------
 
 @_guard("codon_aligner_score_finite")
-def check_codon_aligner_score_finite(result):
+def check_codon_aligner_score_finite(aligner, result):
     """BP-SWE-036: the returned codon-alignment score must be finite for any
     pair of sequences accepted by the input-conversion code -- the same
     generic numeric-validity property as BP-SWE-024, on the independent
-    ``CodonAligner`` C extension rather than ``PairwiseAligner``.
+    ``CodonAligner`` C extension rather than ``PairwiseAligner``. Infinite or
+    >1e100 scoring parameters are excluded as for BP-SWE-024.
     """
+    if not _aligner_params_ok(aligner):
+        return
     trigger_if(not math.isfinite(result), "BP-SWE-036")
 
 
@@ -565,6 +635,9 @@ def check_counts_identity_mismatch_partition(no_wildcard, identities, mismatches
     which is why this precondition excludes it rather than treating it as a
     real defect.
     """
+    # ``no_wildcard`` is also False when a sequence is undefined (Seq(None,
+    # length)): ``counts()`` deliberately counts such blocks as aligned
+    # without identities or mismatches.
     if not no_wildcard:
         return
     trigger_if(identities + mismatches != aligned, "BP-SWE-044")

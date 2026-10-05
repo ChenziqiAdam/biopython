@@ -766,7 +766,7 @@ class DistanceTreeConstructor(TreeConstructor):
 
             del dm[min_i]
             if _traditional_checkers.enabled():
-                _traditional_checkers.check_upgma_matrix_finite(dm)
+                _traditional_checkers.check_upgma_matrix_finite(dm, distance_matrix)
         inner_clade.branch_length = 0
         tree = BaseTree.Tree(inner_clade)
         if _traditional_checkers.enabled():

@@ -50,7 +50,9 @@ class Superimposer:
             _traditional_checkers.check_superimposer_shape(
                 self.rotran[0], self.rotran[1]
             )
-            _traditional_checkers.check_superimposer_rms_finite(self.rms)
+            _traditional_checkers.check_superimposer_rms_finite(
+                self.rms, fixed_coord, moving_coord
+            )
 
     def apply(self, atom_list):
         """Rotate/translate a list of atoms."""

@@ -460,7 +460,7 @@ class PositionSpecificScoringMatrix(GenericPositionMatrix):
             _traditional_checkers.check_pssm_output_shape(n, m, scores)
             _sci_acgt = set(sequence.upper()) <= {65, 67, 71, 84}  # b"ACGT"
             _traditional_checkers.check_pssm_output_finite(
-                n, m, _sci_acgt, result
+                n, m, _sci_acgt and bool(np.all(np.isfinite(logodds))), result
             )
 
         return result

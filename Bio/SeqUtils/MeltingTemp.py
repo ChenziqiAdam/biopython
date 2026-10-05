@@ -1079,7 +1079,9 @@ def Tm_NN(
         # Tm = 1/(1/Tm + corr)
         melting_temp = 1 / (1 / (melting_temp + 273.15) + corr) - 273.15
     if _traditional_checkers.enabled():
-        _traditional_checkers.check_tm_nn_result_finite(melting_temp)
+        _traditional_checkers.check_tm_nn_result_finite(
+            melting_temp, delta_h, delta_s
+        )
 
     return melting_temp
 

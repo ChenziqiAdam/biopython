@@ -3981,8 +3981,13 @@ class Alignment:
         else:
             result = _alignmentcounts.AlignmentCounts(sequences, coordinates, strands)
         if _traditional_checkers.enabled():
-            no_wildcard = wildcard is None and (
-                aligner is None or aligner.wildcard is None
+            no_wildcard = (
+                wildcard is None
+                and (aligner is None or aligner.wildcard is None)
+                and all(
+                    s is not None and getattr(s, "defined", True)
+                    for s in self.sequences
+                )
             )
             _traditional_checkers.check_counts_identity_mismatch_partition(
                 no_wildcard, result.identities, result.mismatches, result.aligned
@@ -4569,7 +4574,7 @@ AlignmentCounts object returned by the .counts method of an Alignment object."""
                 )
         result = super().score(seqA, seqB, strand)
         if _traditional_checkers.enabled():
-            _traditional_checkers.check_aligner_score_finite(result)
+            _traditional_checkers.check_aligner_score_finite(self, result)
         return result
 
     def __getstate__(self):
@@ -4747,7 +4752,7 @@ class CodonAligner(_codonaligner.CodonAligner):
             )
         result = super().score(sA, sB0, sB1, sB2)
         if _traditional_checkers.enabled():
-            _traditional_checkers.check_codon_aligner_score_finite(result)
+            _traditional_checkers.check_codon_aligner_score_finite(self, result)
         return result
 
     def align(self, seqA, seqB):

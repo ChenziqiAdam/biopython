@@ -331,7 +331,9 @@ class QCPSuperimposer:
 
         if _traditional_checkers.enabled():
             _traditional_checkers.check_qcp_natoms(self._natoms, self.rms)
-            _traditional_checkers.check_qcp_rms_finite(self._natoms, self.rms)
+            _traditional_checkers.check_qcp_rms_finite(
+                self._natoms, self.rms, coords, coords_ref
+            )
 
     # Getters
     def get_transformed(self):
