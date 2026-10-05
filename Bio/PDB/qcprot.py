@@ -24,7 +24,6 @@ Epub 2005 Jun 23. PMID: 15973002.
 import numpy as np
 
 from Bio import _scientific_checkers
-from Bio import _traditional_checkers
 from Bio.PDB.PDBExceptions import PDBException
 
 
@@ -347,9 +346,6 @@ class QCPSuperimposer:
             _scientific_checkers.check_qcp_translation_invariance(
                 self.reference_coords, self.coords, self.rot, self.rms
             )
-        if _traditional_checkers.enabled():
-            _traditional_checkers.check_qcp_natoms(self._natoms, self.rms)
-            _traditional_checkers.check_qcp_rms_finite(self._natoms, self.rms)
 
     # Getters
     def get_transformed(self):

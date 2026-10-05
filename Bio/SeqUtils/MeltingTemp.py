@@ -155,7 +155,6 @@ import math
 import warnings
 
 from Bio import _scientific_checkers
-from Bio import _traditional_checkers
 from Bio import BiopythonWarning
 from Bio import Seq
 from Bio import SeqUtils
@@ -560,10 +559,6 @@ def salt_correction(Na=0, K=0, Tris=0, Mg=0, dNTPs=0, method=1, seq=None):
     # Turn black code style off
     # fmt: off
     if method == 7:
-        if _traditional_checkers.enabled():
-            _traditional_checkers.check_salt_correction_unit_length(
-                method, len(seq)
-            )
         a, b, c, d = 3.92, -0.911, 6.26, 1.42
         e, f, g = -48.2, 52.5, 8.31
         if dNTPs > 0:
@@ -585,8 +580,6 @@ def salt_correction(Na=0, K=0, Tris=0, Mg=0, dNTPs=0, method=1, seq=None):
                             - 8.03e-3 * math.log(mon) ** 2)
                 g = 8.31 * (0.486 - 0.258 * math.log(mon)
                             + 5.25e-3 * math.log(mon) ** 3)
-        if _traditional_checkers.enabled():
-            _traditional_checkers.check_salt_correction_log_domain(mg)
         corr = (a + b * math.log(mg) + (SeqUtils.gc_fraction(seq, "ignore"))
                 * (c + d * math.log(mg)) + (1 / (2.0 * (len(seq) - 1)))
                 * (e + f * math.log(mg) + g * math.log(mg) ** 2)) * 1e-5
@@ -779,9 +772,6 @@ def Tm_GC(
         raise ValueError(
             "ambiguous bases B, D, H, K, M, N, R, V, Y not allowed when 'strict=True'"
         )
-
-    if _traditional_checkers.enabled():
-        _traditional_checkers.check_tm_gc_length_division(len(seq))
 
     # Ambiguous bases: add 0.5, 0.67 or 0.33% depending on G+C probability:
     percent_gc = SeqUtils.gc_fraction(seq, "weighted") * 100
@@ -1083,16 +1073,12 @@ def Tm_NN(
         )
     if saltcorr == 5:
         delta_s += corr
-    if _traditional_checkers.enabled():
-        _traditional_checkers.check_tm_nn_log_domain(dnac1, dnac2, selfcomp)
     melting_temp = (1000 * delta_h) / (delta_s + (R * (math.log(k)))) - 273.15
     if saltcorr in (1, 2, 3, 4):
         melting_temp += corr
     if saltcorr in (6, 7):
         # Tm = 1/(1/Tm + corr)
         melting_temp = 1 / (1 / (melting_temp + 273.15) + corr) - 273.15
-    if _traditional_checkers.enabled():
-        _traditional_checkers.check_tm_nn_result_finite(melting_temp)
 
     if _scientific_checkers.enabled():
         _scientific_checkers.check_tm_nn_revcomp(
