@@ -292,7 +292,7 @@
       "symbol": "PairwiseAligner.score"
     },
     {
-      "alarm": "additive input and any leaf-pair patristic distance differs by > 1e-6 between the tree and the tree built from a row/col-permuted copy",
+      "alarm": "additive input and any leaf-pair patristic distance differs by > tol between the tree and the tree built from a row/col-permuted copy, tol = max(1e-9, 64*eps(entry dtype)) * max(1, largest finite pairwise distance)",
       "family": "nj_leaf_order_invariance",
       "id": "BP-PHY-001",
       "invariant": "for additive input, permuting the rows/columns of the matrix yields a tree with identical patristic distances between every pair of leaves",
@@ -304,7 +304,7 @@
       "symbol": "DistanceTreeConstructor.nj"
     },
     {
-      "alarm": "additive input and an output patristic distance differs from the input distance by > 1e-6",
+      "alarm": "additive input and an output patristic distance differs from the input distance by > tol, tol = max(1e-9, 64*eps(entry dtype)) * max(1, largest finite pairwise distance)",
       "family": "nj_additivity",
       "id": "BP-PHY-002",
       "invariant": "for additive input, NJ reconstructs the generating tree exactly: every output patristic distance equals the corresponding input distance",
@@ -316,7 +316,7 @@
       "symbol": "DistanceTreeConstructor.nj"
     },
     {
-      "alarm": "a root-to-leaf depth differs by > 1e-6, or the two largest of a leaf triple's pairwise patristic distances differ by > 1e-6",
+      "alarm": "a root-to-leaf depth differs by > tol, or the two largest of a leaf triple's pairwise patristic distances differ by > tol, tol = max(1e-9, 64*eps(entry dtype)) * max(1, largest finite pairwise distance)",
       "family": "upgma_ultrametric",
       "id": "BP-PHY-003",
       "invariant": "the tree is ultrametric: all leaves equidistant from the root, and for any three leaves the two largest pairwise patristic distances are equal (three-point condition)",
@@ -328,7 +328,7 @@
       "symbol": "DistanceTreeConstructor.upgma"
     },
     {
-      "alarm": "min branch length < -1e-6",
+      "alarm": "min branch length < -tol, tol = max(1e-9, 64*eps(entry dtype)) * max(1, largest finite pairwise distance)",
       "family": "tree_branch_length_nonnegative",
       "id": "BP-PHY-004",
       "invariant": "every estimated branch length is >= 0",
@@ -388,7 +388,7 @@
       "symbol": "molecular_weight"
     },
     {
-      "alarm": "max(abs(rot @ rot.T - I)) exceeds C1*eps64*scale, or abs(det(rot)-1) exceeds C2*eps64*scale, scale computed from rot's own O(1) entries",
+      "alarm": "max(abs(rot @ rot.T - I)) or abs(det(rot)-1) exceeds tol = max(1e-8, 64*eps(coarsest input/rot float dtype)) (float64 1e-8, float32 ~7.6e-6)",
       "family": "qcp_rotation_properness",
       "id": "BP-PDB-020",
       "invariant": "the rotation matrix rot returned by QCPSuperimposer.run is a proper rotation: it is orthogonal (rot @ rot.T == I) and orientation-preserving (det(rot) == +1)",
@@ -400,7 +400,7 @@
       "symbol": "QCPSuperimposer.run / qcp"
     },
     {
-      "alarm": "self.get_rms() > self.get_init_rms() + tol, where tol = C*eps64*sqrt(N)*scale, scale = max(1, get_init_rms(), get_rms(), max(abs(reference_coords)), max(abs(coords)))",
+      "alarm": "self.get_rms() > self.get_init_rms() + tol, where tol = max(1e-6*scale, 16*sqrt(eps)*max(scale, radius)), scale = max(1, get_init_rms(), get_rms()), radius = max over the two sets of the RMS distance of the (centred) coordinates from the origin, eps = machine epsilon of the coarsest input float dtype",
       "family": "qcp_rmsd_optimality",
       "id": "BP-PDB-021",
       "invariant": "get_rms() after the optimal rotation/translation is applied is <= get_init_rms(), because QCP minimizes RMSD over all rigid motions and the identity motion is one member of that search space",
@@ -412,7 +412,7 @@
       "symbol": "QCPSuperimposer.run / QCPSuperimposer.get_init_rms"
     },
     {
-      "alarm": "abs(get_rms() - sqrt(mean(sum((reference_coords - get_transformed())**2, axis=1)))) > tol, tol = C*eps64*sqrt(N)*scale",
+      "alarm": "abs(get_rms() - sqrt(mean(sum((reference_coords - get_transformed())**2, axis=1)))) > tol, tol = max(max(1e-3, 32*sqrt(eps))*radius, 64*eps*max|coord|), radius = RMS distance of reference_coords from their centroid, eps = machine epsilon of the coarsest input float dtype",
       "family": "qcp_rmsd_cross_consistency",
       "id": "BP-PDB-022",
       "invariant": "the scalar RMSD from get_rms() (computed algebraically via the QCP eigenvalue) must agree with the RMSD computed directly from Euclidean distances between reference_coords and get_transformed()",
@@ -424,7 +424,7 @@
       "symbol": "QCPSuperimposer.run / QCPSuperimposer.get_transformed"
     },
     {
-      "alarm": "max(abs(rot_translated - rot_original)) > C1*eps64*(1+|t|/scale) or abs(rms_translated - rms_original) > C2*eps64*sqrt(N)*(scale+|t|)",
+      "alarm": "with s = max(1, max|coord|) and t = (s,s,s): max(abs(rot_translated - rot_original)) > rot_tol or abs(rms_translated - rms_original) > rms_tol; float64 rot_tol = 1e-6*(1+s), rms_tol = 1e-6*(s+|t|); for float32 input rot_tol = max(rot_tol, 256*eps*(1+s)) and rms_tol = max(rms_tol, 16*sqrt(eps)*(1+s)), eps = machine epsilon of the coarsest input dtype",
       "family": "qcp_translation_invariance",
       "id": "BP-PDB-023",
       "invariant": "translating both point sets by the same constant vector t before set()/run() does not change the fitted rotation, and changes the RMSD by no more than the numerical-error budget of the centering subtraction, since run() explicitly mean-centers both point sets before fitting",
@@ -477,7 +477,7 @@
       "id": "BP-SEQ-054",
       "invariant": "whenever calculate() takes the ATG/TGG forced-weight branch for a codon c, the table weight this instance actually computed for c (self.get(c)) must equal 1.0 -- the only condition under which the class's own construction (self[codon] = counts[codon]/max(counts of the same amino-acid group)) guarantees that weight",
       "observation_point": "in CodonAdaptationIndex.calculate, at the point the 'if codon in [\"ATG\",\"TGG\"]: continue' branch is taken; reconstructed after calculate() returns from the sequence and the already-built index",
-      "precondition": "any CodonAdaptationIndex instance constructed via __init__ from any Bio.Data.CodonTable.CodonTable-conforming table, and any in-frame DNA sequence over ACGT containing at least one ATG or TGG codon",
+      "precondition": "any CodonAdaptationIndex instance constructed via __init__ from any Bio.Data.CodonTable.CodonTable-conforming table whose weights have not been edited since construction, and any in-frame DNA sequence over ACGT containing at least one ATG or TGG codon",
       "rationale": "the exclusion is a numerical shortcut standing in for a fact about the genetic code (Met/Trp encoded by a single codon each); several genetic codes Biopython ships reassign codons so Trp has two synonyms (e.g. TGA reassigned to Trp in several mitochondrial codes, making it synonymous with TGG). Under such a table the shortcut silently forces a codon that may be poorly represented in the reference set to score as if optimally adapted, producing a CAI that is not the geometric mean of this table's own weights",
       "scientific_quantity": "codon adaptation index as a geometric mean of per-codon relative adaptiveness weights derived from the genetic-code table the instance was built with",
       "source": "Bio/SeqUtils/__init__.py",

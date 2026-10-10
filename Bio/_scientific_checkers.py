@@ -453,6 +453,8 @@ def check_cai_hardcoded_codon_weight(index, sequence, result):
     making it synonymous with TGG in several mitochondrial codes). Reads
     sequence and the already-built index/table; does not recompute CAI.
     """
+    if not _cai_unmodified(index):
+        return
     text = str(sequence).upper()
     if not text or len(text) % 3 or set(text) - set("ACGT"):
         return
@@ -856,6 +858,24 @@ def check_rotmat(p, q, matrix):
     # unrelated to the argument-slot gap fixed above.
 
 
+def _float_eps(*arrays):
+    """Machine epsilon of the coarsest floating dtype among ``arrays``.
+
+    Float64 (and integer / Python-list input, which numpy promotes to float64)
+    gives 2.2e-16.  float32 coordinates, e.g. PDB-style single precision, make
+    the library compute in float32, so its round-off is ~1.2e-7 and a float64
+    tolerance would flag legitimate precision loss rather than a law violation.
+    """
+    import numpy as np
+
+    eps = float(np.finfo(np.float64).eps)
+    for a in arrays:
+        dt = getattr(a, "dtype", None)
+        if dt is not None and np.issubdtype(dt, np.floating):
+            eps = max(eps, float(np.finfo(dt).eps))
+    return eps
+
+
 @_guard("pdb_qcp_rotation_properness")
 def check_qcp_rotation_properness(rot, coords=None):
     """BP-PDB-020: QCP is defined as an eigen-decomposition method that
@@ -878,12 +898,14 @@ def check_qcp_rotation_properness(rot, coords=None):
         return
     orth_err = float(np.max(np.abs(r @ r.T - np.eye(3))))
     det_err = float(abs(np.linalg.det(r) - 1.0))
-    tol = 1e-8
+    # 1e-8 for float64; float32 input yields a rotation orthogonal only to a
+    # few eps(float32) ~ 1e-7, so scale by the input dtype's epsilon.
+    tol = max(1e-8, 64.0 * _float_eps(rot, coords))
     trigger_if(orth_err > tol or det_err > tol, "BP-PDB-020")
 
 
 @_guard("pdb_qcp_rmsd_optimality")
-def check_qcp_rmsd_optimality(init_rms, rms):
+def check_qcp_rmsd_optimality(init_rms, rms, coords_ref=None, coords=None):
     """BP-PDB-021: QCP minimizes RMSD over all rigid motions, and the
     identity motion (no rotation/translation) is always in that search
     space. Therefore the fitted RMSD can never exceed the RMSD of the
@@ -892,6 +914,19 @@ def check_qcp_rmsd_optimality(init_rms, rms):
     """
     scale = max(1.0, float(init_rms), float(rms))
     tol = 1e-6 * scale
+    if coords_ref is not None and coords is not None:
+        # QCP's RMSD is sqrt(2|E0 - lambda|/N), a difference of two nearly equal
+        # numbers, so it is only accurate to ~sqrt(eps) times the radius of the
+        # (centred) point sets, not eps: float64 identical sets at radius ~50
+        # report rms ~1e-6, float32 ones ~1e-3.
+        import numpy as np
+
+        eps = _float_eps(coords_ref, coords)
+        radius = max(
+            float(np.sqrt(np.mean(np.sum(np.asarray(c, dtype=float) ** 2, axis=1))))
+            for c in (coords_ref, coords)
+        )
+        tol = max(tol, 16.0 * math.sqrt(eps) * max(scale, radius))
     trigger_if(float(rms) > float(init_rms) + tol, "BP-PDB-021")
 
 
@@ -918,6 +953,15 @@ def check_qcp_rmsd_cross_consistency(reference_coords, coords, rot, tran, rms):
     direct_rms = float(np.sqrt(np.mean(np.sum((ref - moved) ** 2, axis=1))))
     scale = max(1.0, float(rms), float(np.abs(ref).max()), float(np.abs(moved).max()))
     tol = 1e-6 * scale
+    # QCP's rms is sqrt(2|E0-lambda|/N), a difference of nearly equal numbers, and for
+    # near-collinear (rod-like) sets the top quaternion eigenvalues nearly coincide, so a
+    # correct float64 run is only accurate to ~eps**0.25 of the radius (observed <= 8e-4);
+    # float32 loses ~sqrt(eps). A genuine failure (identity fallback, non-converged root)
+    # errs by O(1e-2..1) of the radius, so the tolerance is radius-relative and dtype-aware.
+    eps = _float_eps(reference_coords, coords)
+    radius = float(np.sqrt(np.mean(np.sum((ref - ref.mean(axis=0)) ** 2, axis=1))))
+    floor = 64.0 * eps * max(float(np.abs(ref).max()), float(np.abs(moved).max()))
+    tol = max(max(1e-3, 32.0 * math.sqrt(eps)) * radius, floor)
     trigger_if(abs(float(rms) - direct_rms) > tol, "BP-PDB-022")
 
 
@@ -955,6 +999,13 @@ def check_qcp_translation_invariance(reference_coords, coords, rot, rms):
 
     rot_tol = 1e-6 * (1.0 + scale)
     rms_tol = 1e-6 * (scale + float(np.linalg.norm(t)))
+    eps = _float_eps(reference_coords, coords)
+    if eps > 1e-10:
+        # Single precision: the original fit ran in float32 (the probe runs in
+        # float64 on the same rounded values), so the two fits legitimately
+        # differ by float32 round-off; the RMSD only to ~sqrt(eps).
+        rot_tol = max(rot_tol, 256.0 * eps * (1.0 + scale))
+        rms_tol = max(rms_tol, 16.0 * math.sqrt(eps) * (1.0 + scale))
     rot_err = float(np.max(np.abs(np.asarray(shifted.rot) - r)))
     trigger_if(rot_err > rot_tol, "BP-PDB-023")
     trigger_if(abs(float(shifted.rms) - float(rms)) > rms_tol, "BP-PDB-023")
@@ -1354,6 +1405,26 @@ def _matrix_scale(distance_matrix):
     return max([1.0, *vals])
 
 
+def _matrix_tol(distance_matrix):
+    """Absolute tolerance for patristic / branch-length comparisons.
+
+    ``1e-9 * scale`` for float64 entries.  If the entries are float32 (numpy
+    scalars) NJ/UPGMA do their arithmetic in float32, whose round-off
+    (~1.2e-7 relative) is far above 1e-9, so the tolerance becomes
+    ``64 * eps(dtype) * scale``.
+    """
+    import numpy as np
+
+    eps = float(np.finfo(np.float64).eps)
+    names = list(distance_matrix.names)
+    for i in range(len(names)):
+        for j in range(i):
+            v = distance_matrix[names[i], names[j]]
+            if isinstance(v, np.floating):
+                eps = max(eps, float(np.finfo(type(v)).eps))
+    return max(1e-9, 64.0 * eps) * _matrix_scale(distance_matrix)
+
+
 def _matrix_arithmetic_safe(distance_matrix):
     """Whether O(n)-term float64 distance arithmetic cannot overflow.
 
@@ -1473,7 +1544,7 @@ def check_nj_leaf_order(distance_matrix, tree):
     if set(d0) != set(d1):
         trigger("BP-PHY-001")
         return
-    tol = 1e-9 * _matrix_scale(distance_matrix)
+    tol = _matrix_tol(distance_matrix)
     differs = any(not _within(d0[k], d1[k], tol) for k in d0)
     trigger_if(differs, "BP-PHY-001")
 
@@ -1496,7 +1567,7 @@ def check_nj_additivity(distance_matrix, tree):
     # Additive input: NJ must reproduce every input distance exactly.
     patristic = _patristic(tree)
     names = list(distance_matrix.names)
-    tol = 1e-9 * _matrix_scale(distance_matrix)
+    tol = _matrix_tol(distance_matrix)
     bad = False
     for i in range(n):
         for j in range(i):
@@ -1521,7 +1592,7 @@ def check_upgma_ultrametric(distance_matrix, tree):
         return
     # Tolerance scales with the input distance magnitude (methodology 8.3):
     # a fixed 1e-6 is far too tight on a matrix with entries ~1e4.
-    tol = 1e-9 * _matrix_scale(distance_matrix)
+    tol = _matrix_tol(distance_matrix)
     terminals = tree.get_terminals()
     root = tree.root
     depths = tree.depths()
@@ -1568,7 +1639,7 @@ def check_tree_branch_lengths(distance_matrix, tree, method):
     # magnitude (methodology 8.3). A fixed -1e-6 fired at matrix scale ~1e12
     # where the true relative negativity was still ~1e-17 -- audit 4, BP-PHY-004.
     # PHY-001/002/003 already scale by _matrix_scale; this site was missed.
-    tol = -1e-9 * _matrix_scale(distance_matrix)
+    tol = -_matrix_tol(distance_matrix)
     if method == "upgma":
         trigger_if(negative < tol, "BP-PHY-004")
         return

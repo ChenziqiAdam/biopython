@@ -336,7 +336,9 @@ class QCPSuperimposer:
             init_rms = float(
                 np.sqrt(np.mean(np.sum((coords_ref - coords) ** 2, axis=1)))
             )
-            _scientific_checkers.check_qcp_rmsd_optimality(init_rms, self.rms)
+            _scientific_checkers.check_qcp_rmsd_optimality(
+                init_rms, self.rms, coords_ref, coords
+            )
             _scientific_checkers.check_qcp_rmsd_cross_consistency(
                 self.reference_coords, self.coords, self.rot, self.tran, self.rms
             )
