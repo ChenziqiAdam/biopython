@@ -1018,7 +1018,20 @@ def check_qcp_translation_invariance(reference_coords, coords, rot, rms):
     )
     rms_tol = max(rms_tol, max(1e-3, 16.0 * math.sqrt(eps)) * radius)
     rot_err = float(np.max(np.abs(np.asarray(shifted.rot) - r)))
-    trigger_if(rot_err > rot_tol, "BP-PDB-023")
+    # A rotation difference alone is not a translation dependence when both
+    # rotations fit the (centred) data equally well: near-degenerate top
+    # eigenvalues leave the optimal rotation ill-determined. Compare the fit
+    # objective of the two rotations and require it to differ as well.
+    cr = ref - ref.mean(axis=0)
+    cm = mov - mov.mean(axis=0)
+
+    def _fit_rms(rr):
+        d = cr - cm @ np.asarray(rr, dtype=float)
+        return float(np.sqrt(np.mean(np.sum(d**2, axis=1))))
+
+    obj_err = abs(_fit_rms(shifted.rot) - _fit_rms(r))
+    obj_tol = max(rot_tol, 1e-8) * radius
+    trigger_if(rot_err > rot_tol and obj_err > obj_tol, "BP-PDB-023")
     trigger_if(abs(float(shifted.rms) - float(rms)) > rms_tol, "BP-PDB-023")
 
 

@@ -424,7 +424,7 @@
       "symbol": "QCPSuperimposer.run / QCPSuperimposer.get_transformed"
     },
     {
-      "alarm": "with s = max(1, max|coord|) and t = (s,s,s): max(abs(rot_translated - rot_original)) > rot_tol or abs(rms_translated - rms_original) > rms_tol; float64 rot_tol = 1e-6*(1+s), rms_tol = max(1e-6*(s+|t|), max(1e-3, 16*sqrt(eps))*R), R = largest RMS distance of a centred point set from its centroid; for float32 input additionally rot_tol = max(rot_tol, 256*eps*(1+s)) and rms_tol = max(rms_tol, 16*sqrt(eps)*(1+s)), eps = machine epsilon of the coarsest input dtype",
+      "alarm": "with s = max(1, max|coord|) and t = (s,s,s): max(abs(rot_translated - rot_original)) > rot_tol and the two rotations also differ in fit objective, |RMS_fit(rot_translated) - RMS_fit(rot_original)| > rot_tol*R, where RMS_fit is the direct RMS distance of the centred moving set rotated by that matrix from the centred reference (a rotation difference between equally good fits of a near-degenerate set is not a translation dependence); or abs(rms_translated - rms_original) > rms_tol; float64 rot_tol = 1e-6*(1+s), rms_tol = max(1e-6*(s+|t|), max(1e-3, 16*sqrt(eps))*R), R = largest RMS distance of a centred point set from its centroid; for float32 input additionally rot_tol = max(rot_tol, 256*eps*(1+s)) and rms_tol = max(rms_tol, 16*sqrt(eps)*(1+s)), eps = machine epsilon of the coarsest input dtype",
       "family": "qcp_translation_invariance",
       "id": "BP-PDB-023",
       "invariant": "translating both point sets by the same constant vector t before set()/run() does not change the fitted rotation, and changes the RMSD by no more than the numerical-error budget of the centering subtraction, since run() explicitly mean-centers both point sets before fitting",
