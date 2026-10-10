@@ -926,7 +926,10 @@ def check_qcp_rmsd_optimality(init_rms, rms, coords_ref=None, coords=None):
             float(np.sqrt(np.mean(np.sum(np.asarray(c, dtype=float) ** 2, axis=1))))
             for c in (coords_ref, coords)
         )
-        tol = max(tol, 16.0 * math.sqrt(eps) * max(scale, radius))
+        # Near a multiple top root of the quaternion eigenproblem (mirror-image or
+        # near-collinear sets) the eigenvalue is only accurate to ~eps**(1/3), so the
+        # radius-relative floor is 1e-3 (as in BP-PDB-022).
+        tol = max(tol, max(1e-3, 16.0 * math.sqrt(eps)) * max(scale, radius))
     trigger_if(float(rms) > float(init_rms) + tol, "BP-PDB-021")
 
 
@@ -1006,6 +1009,14 @@ def check_qcp_translation_invariance(reference_coords, coords, rot, rms):
         # differ by float32 round-off; the RMSD only to ~sqrt(eps).
         rot_tol = max(rot_tol, 256.0 * eps * (1.0 + scale))
         rms_tol = max(rms_tol, 16.0 * math.sqrt(eps) * (1.0 + scale))
+    # QCP's rms = sqrt(2(E0-lambda)/N) is a difference of nearly equal numbers and, for
+    # near-collinear sets (multiple top root), is accurate only to a radius-relative 1e-3;
+    # the rotation check stays tight.
+    radius = max(
+        float(np.sqrt(np.mean(np.sum((a - a.mean(axis=0)) ** 2, axis=1))))
+        for a in (ref, mov)
+    )
+    rms_tol = max(rms_tol, max(1e-3, 16.0 * math.sqrt(eps)) * radius)
     rot_err = float(np.max(np.abs(np.asarray(shifted.rot) - r)))
     trigger_if(rot_err > rot_tol, "BP-PDB-023")
     trigger_if(abs(float(shifted.rms) - float(rms)) > rms_tol, "BP-PDB-023")

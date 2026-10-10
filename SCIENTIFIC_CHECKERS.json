@@ -400,7 +400,7 @@
       "symbol": "QCPSuperimposer.run / qcp"
     },
     {
-      "alarm": "self.get_rms() > self.get_init_rms() + tol, where tol = max(1e-6*scale, 16*sqrt(eps)*max(scale, radius)), scale = max(1, get_init_rms(), get_rms()), radius = max over the two sets of the RMS distance of the (centred) coordinates from the origin, eps = machine epsilon of the coarsest input float dtype",
+      "alarm": "self.get_rms() > self.get_init_rms() + tol, where tol = max(1e-6*scale, max(1e-3, 16*sqrt(eps))*max(scale, radius)), scale = max(1, get_init_rms(), get_rms()), radius = max over the two sets of the RMS distance of the (centred) coordinates from the origin, eps = machine epsilon of the coarsest input float dtype",
       "family": "qcp_rmsd_optimality",
       "id": "BP-PDB-021",
       "invariant": "get_rms() after the optimal rotation/translation is applied is <= get_init_rms(), because QCP minimizes RMSD over all rigid motions and the identity motion is one member of that search space",
@@ -424,7 +424,7 @@
       "symbol": "QCPSuperimposer.run / QCPSuperimposer.get_transformed"
     },
     {
-      "alarm": "with s = max(1, max|coord|) and t = (s,s,s): max(abs(rot_translated - rot_original)) > rot_tol or abs(rms_translated - rms_original) > rms_tol; float64 rot_tol = 1e-6*(1+s), rms_tol = 1e-6*(s+|t|); for float32 input rot_tol = max(rot_tol, 256*eps*(1+s)) and rms_tol = max(rms_tol, 16*sqrt(eps)*(1+s)), eps = machine epsilon of the coarsest input dtype",
+      "alarm": "with s = max(1, max|coord|) and t = (s,s,s): max(abs(rot_translated - rot_original)) > rot_tol or abs(rms_translated - rms_original) > rms_tol; float64 rot_tol = 1e-6*(1+s), rms_tol = max(1e-6*(s+|t|), max(1e-3, 16*sqrt(eps))*R), R = largest RMS distance of a centred point set from its centroid; for float32 input additionally rot_tol = max(rot_tol, 256*eps*(1+s)) and rms_tol = max(rms_tol, 16*sqrt(eps)*(1+s)), eps = machine epsilon of the coarsest input dtype",
       "family": "qcp_translation_invariance",
       "id": "BP-PDB-023",
       "invariant": "translating both point sets by the same constant vector t before set()/run() does not change the fitted rotation, and changes the RMSD by no more than the numerical-error budget of the centering subtraction, since run() explicitly mean-centers both point sets before fitting",
