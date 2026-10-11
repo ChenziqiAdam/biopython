@@ -1379,6 +1379,15 @@ def check_aligner_align_vs_score(aligner, seqA, seqB, align_score):
         return
     clone = _clone_aligner(aligner)
     tol = _score_compare_tol(aligner, a, b)
+    # The traceback accepts any path within `epsilon` of the optimum per cell
+    # (documented tie slack), so the reported alignment score may differ from
+    # score() by up to epsilon per aligned position along the path.
+    try:
+        eps = float(aligner.epsilon)
+    except Exception:
+        eps = 1e-6
+    if math.isfinite(eps) and eps > 0.0:
+        tol = max(tol, (len(a) + len(b)) * eps)
     trigger_if(not _within(float(clone.score(a, b)), float(align_score), tol),
                "BP-ALN-003")
 

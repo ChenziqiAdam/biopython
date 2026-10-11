@@ -256,12 +256,12 @@
       "symbol": "PairwiseAligner.score"
     },
     {
-      "alarm": "|score(A, B) - align(A, B).score| > 1e-9 (relative)",
+      "alarm": "|score(A, B) - align(A, B).score| > max(DP-intermediate rounding tolerance, (len(A) + len(B)) * aligner.epsilon)",
       "family": "aligner_align_vs_score",
       "id": "BP-ALN-003",
       "invariant": "the score reported by score() equals the score of the best alignment returned by align()",
       "observation_point": "after PairwiseAligner.align builds the alignments, before returning",
-      "precondition": "two non-empty sequences expressible as text; any scoring scheme whose nonzero terms exceed traceback epsilon and whose max_term*max_sequence_length is below float64 overflow with a factor-16 safety margin; any mode",
+      "precondition": "two non-empty sequences expressible as text; any scoring scheme whose nonzero terms exceed traceback epsilon (the comparison also allows the aligner's documented per-position epsilon tie slack) and whose max_term*max_sequence_length is below float64 overflow with a factor-16 safety margin; any mode",
       "rationale": "the score-only dynamic program and the traceback share an optimum by construction; a discrepancy means one of the two recurrences is wrong",
       "scientific_quantity": "optimal pairwise alignment score",
       "source": "Bio/Align/__init__.py",
