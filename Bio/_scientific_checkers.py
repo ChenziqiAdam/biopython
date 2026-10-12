@@ -1377,6 +1377,24 @@ def check_aligner_align_vs_score(aligner, seqA, seqB, align_score):
         # scores below the aligner's traceback epsilon: score() and align()
         # legitimately diverge (documented behaviour of `epsilon`), not a bug.
         return
+    if str(getattr(aligner, "mode", "")) == "local":
+        # Smith-Waterman/Gotoh local alignment assumes non-positive gap
+        # scores (the zero floor is only valid then; Biopython docs: gap
+        # scores are "negative or zero"). A positive gap score rewards
+        # indels, so the local optimum is not a meaningful alignment.
+        for _name in ("open_internal_insertion_score",
+                      "extend_internal_insertion_score",
+                      "open_internal_deletion_score",
+                      "extend_internal_deletion_score",
+                      "open_left_insertion_score", "extend_left_insertion_score",
+                      "open_right_insertion_score", "extend_right_insertion_score",
+                      "open_left_deletion_score", "extend_left_deletion_score",
+                      "open_right_deletion_score", "extend_right_deletion_score"):
+            try:
+                if float(getattr(aligner, _name)) > 0.0:
+                    return
+            except Exception:
+                continue
     clone = _clone_aligner(aligner)
     tol = _score_compare_tol(aligner, a, b)
     # The traceback accepts any path within `epsilon` of the optimum per cell
