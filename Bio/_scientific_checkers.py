@@ -876,6 +876,32 @@ def _float_eps(*arrays):
     return eps
 
 
+def _narrow_dtype_eps(*values, terms=1):
+    """Shared narrow-dtype policy: working epsilon of ``values``, or None.
+
+    None when any value is a fixed-width numpy integer (scalar or array) whose
+    dtype cannot hold ``terms * max|x|`` -- the library's own sums/products in
+    that dtype can wrap around, which is a software dtype fact, not a law
+    violation, so the caller skips. Otherwise the epsilon of the coarsest
+    floating dtype involved (float32/float16 are checked, not skipped, with a
+    tolerance scaled by this value); integers and Python numbers give float64's.
+    """
+    import numpy as np
+
+    eps = float(np.finfo(np.float64).eps)
+    for v in values:
+        dt = getattr(v, "dtype", None)
+        if dt is None:
+            continue
+        if np.issubdtype(dt, np.integer):
+            a = np.asarray(v)
+            if a.size and float(terms) * float(np.abs(a.astype(float)).max()) > float(np.iinfo(dt).max):
+                return None
+        elif np.issubdtype(dt, np.floating):
+            eps = max(eps, float(np.finfo(dt).eps))
+    return eps
+
+
 @_guard("pdb_qcp_rotation_properness")
 def check_qcp_rotation_properness(rot, coords=None):
     """BP-PDB-020: QCP is defined as an eigen-decomposition method that
@@ -904,6 +930,32 @@ def check_qcp_rotation_properness(rot, coords=None):
     trigger_if(orth_err > tol or det_err > tol, "BP-PDB-020")
 
 
+def _qcp_root_rms_tol(coords_ref, coords, eps):
+    """RMSD error bound sqrt(2*dl/N) of QCP's top quaternion root in working eps."""
+    import numpy as np
+
+    a = np.asarray(coords_ref, dtype=float)
+    b = np.asarray(coords, dtype=float)
+    if a.shape != b.shape or a.ndim != 2 or a.shape[1] != 3 or a.shape[0] < 1:
+        return None
+    a = a - a.mean(axis=0)
+    b = b - b.mean(axis=0)
+    sxx, sxy, sxz, syx, syy, syz, szx, szy, szz = (a.T @ b).ravel()
+    key = np.array([
+        [sxx + syy + szz, syz - szy, szx - sxz, sxy - syx],
+        [syz - szy, sxx - syy - szz, sxy + syx, szx + sxz],
+        [szx - sxz, sxy + syx, -sxx + syy - szz, syz + szy],
+        [sxy - syx, szx + sxz, syz + szy, -sxx - syy + szz],
+    ])
+    lam = np.linalg.eigvalsh(key)
+    e0 = 0.5 * (float(np.sum(a * a)) + float(np.sum(b * b)))
+    if not (math.isfinite(e0) and e0 > 0.0):
+        return None
+    gap = float(lam[-1] - lam[-2])
+    rel = math.sqrt(eps) if gap <= 0.0 else min(math.sqrt(eps), eps * e0 / gap)
+    return math.sqrt(2.0 * 2.0 * e0 * rel / a.shape[0])  # 2x: a few roundings
+
+
 @_guard("pdb_qcp_rmsd_optimality")
 def check_qcp_rmsd_optimality(init_rms, rms, coords_ref=None, coords=None):
     """BP-PDB-021: QCP minimizes RMSD over all rigid motions, and the
@@ -930,6 +982,16 @@ def check_qcp_rmsd_optimality(init_rms, rms, coords_ref=None, coords=None):
         # near-collinear sets) the eigenvalue is only accurate to ~eps**(1/3), so the
         # radius-relative floor is 1e-3 (as in BP-PDB-022).
         tol = max(tol, max(1e-3, 16.0 * math.sqrt(eps)) * max(scale, radius))
+        # Precision of the top root in the library's working dtype (round 12): the
+        # quartic's coefficients are evaluated with relative error ~eps, so its top root
+        # lambda is accurate to dl = E0*min(sqrt(eps), eps*E0/gap) (double vs simple root;
+        # gap = lambda1 - lambda2 of the key matrix, from a float64 copy of the inputs), and
+        # rms = sqrt(2(E0-lambda)/N) to sqrt(2*dl/N) above the optimum. For float64 this is
+        # <= 2.5e-4*radius, below the 1e-3 floor (non-converged float64 roots still fire);
+        # a float32 near-collinear set (relative gap 3e-6) is accurate only to ~0.4 A.
+        gap_tol = _qcp_root_rms_tol(coords_ref, coords, eps)
+        if gap_tol is not None:
+            tol = max(tol, gap_tol)
     trigger_if(float(rms) > float(init_rms) + tol, "BP-PDB-021")
 
 
@@ -1464,15 +1526,10 @@ def _matrix_tol(distance_matrix):
     (~1.2e-7 relative) is far above 1e-9, so the tolerance becomes
     ``64 * eps(dtype) * scale``.
     """
-    import numpy as np
-
-    eps = float(np.finfo(np.float64).eps)
     names = list(distance_matrix.names)
-    for i in range(len(names)):
-        for j in range(i):
-            v = distance_matrix[names[i], names[j]]
-            if isinstance(v, np.floating):
-                eps = max(eps, float(np.finfo(type(v)).eps))
+    eps = _narrow_dtype_eps(
+        *(distance_matrix[names[i], names[j]] for i in range(len(names)) for j in range(i))
+    ) or 2.220446049250313e-16  # (integer-wrap matrices never reach here)
     return max(1e-9, 64.0 * eps) * _matrix_scale(distance_matrix)
 
 
@@ -1494,7 +1551,19 @@ def _matrix_arithmetic_safe(distance_matrix):
     if not all(math.isfinite(v) for v in vals):
         return False
     max_value = max(vals, default=0.0)
-    return max_value <= sys.float_info.max / (64.0 * max(len(names), 1))
+    if max_value > sys.float_info.max / (64.0 * max(len(names), 1)):
+        return False
+    # Narrow-integer entries (e.g. np.int16): NJ's row sums accumulate up to n
+    # entries, and its/UPGMA's pairwise updates add two or three, in the
+    # entries' own dtype, which wraps silently once 2n*max|d| leaves iinfo --
+    # an integer-overflow artefact (round 12: int16 20000 -> -16384), not a
+    # tree-reconstruction law violation.
+    raw = [
+        distance_matrix[names[i], names[j]]
+        for i in range(len(names))
+        for j in range(i)
+    ]
+    return _narrow_dtype_eps(*raw, terms=2 * max(len(names), 2)) is not None
 
 
 def _input_is_additive(distance_matrix, tree=None):
