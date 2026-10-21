@@ -902,6 +902,28 @@ def _narrow_dtype_eps(*values, terms=1):
     return eps
 
 
+def _qcp_dtype_unsupported(*arrays):
+    """True when a coordinate array is narrower than float32 (round 16, BP-PDB-020..023).
+
+    QCP evaluates degree-12 products of the centred coordinates (qsqr = |q|^2, q a
+    cubic cofactor of the degree-2 key matrix) in the caller's dtype. That needs a
+    dynamic range finfo.max/finfo.tiny >~ (L_hi/L_lo)^12 for coordinates spanning
+    L_lo..L_hi; float16's 1.1e9 leaves a coordinate band of a factor ~(1.1e9)^(1/12)
+    = 5.6, below one bond length. Swept on a rotated 1/2/3-scaled tetrahedron: 0.1 A
+    -> qsqr subnormal, det 0.928; 1 A -> overflow, det 0; >= 3 A -> NaN. No float16
+    coordinate set is a realistic structural input, so these laws are not checked
+    there. float32 (range 2.9e76) stays in scope, including its real 1000 A overflow.
+    """
+    import numpy as np
+
+    f32 = float(np.finfo(np.float32).eps)
+    for a in arrays:
+        dt = getattr(a, "dtype", None)
+        if dt is not None and np.issubdtype(dt, np.floating) and float(np.finfo(dt).eps) > f32:
+            return True
+    return False
+
+
 @_guard("pdb_qcp_rotation_properness")
 def check_qcp_rotation_properness(rot, coords=None):
     """BP-PDB-020: QCP is defined as an eigen-decomposition method that
@@ -912,6 +934,8 @@ def check_qcp_rotation_properness(rot, coords=None):
     """
     import numpy as np
 
+    if _qcp_dtype_unsupported(coords):
+        return
     r = np.asarray(rot, dtype=float)
     if r.shape != (3, 3):
         return
@@ -964,6 +988,8 @@ def check_qcp_rmsd_optimality(init_rms, rms, coords_ref=None, coords=None):
     untransformed point sets; if it does, the reported fit is not
     actually optimal.
     """
+    if _qcp_dtype_unsupported(coords_ref, coords):
+        return
     scale = max(1.0, float(init_rms), float(rms))
     tol = 1e-6 * scale
     if coords_ref is not None and coords is not None:
@@ -1008,6 +1034,8 @@ def check_qcp_rmsd_cross_consistency(reference_coords, coords, rot, tran, rms):
     """
     import numpy as np
 
+    if _qcp_dtype_unsupported(reference_coords, coords):
+        return
     ref = np.asarray(reference_coords, dtype=float)
     mov = np.asarray(coords, dtype=float)
     r = np.asarray(rot, dtype=float)
@@ -1043,6 +1071,8 @@ def check_qcp_translation_invariance(reference_coords, coords, rot, rms):
 
     from Bio.PDB.qcprot import QCPSuperimposer
 
+    if _qcp_dtype_unsupported(reference_coords, coords):
+        return
     ref = np.asarray(reference_coords, dtype=float)
     mov = np.asarray(coords, dtype=float)
     if ref.shape != mov.shape or ref.shape[0] < 3:
@@ -1092,7 +1122,13 @@ def check_qcp_translation_invariance(reference_coords, coords, rot, rms):
         return float(np.sqrt(np.mean(np.sum(d**2, axis=1))))
 
     obj_err = abs(_fit_rms(shifted.rot) - _fit_rms(r))
-    obj_tol = max(rot_tol, 1e-8) * radius
+    # The two objectives are RMSDs of rotations derived from QCP's top root, so they are
+    # only as precise as that root: use the RMS branch's floor (1e-3*radius, dtype-aware)
+    # and the gap-aware root bound of BP-PDB-021 (round 16; a float64 thin reflected
+    # triangle with relative top gap 1.1e-8 has root bound 9.1e-4 A and obj_err 5.6e-5 A).
+    # Genuine wrong rotations (180-degree / inversion regimes) differ by >= 0.8 A.
+    gap_tol = _qcp_root_rms_tol(ref, mov, eps)
+    obj_tol = max(max(rot_tol, 1e-8) * radius, rms_tol, gap_tol or 0.0)
     trigger_if(rot_err > rot_tol and obj_err > obj_tol, "BP-PDB-023")
     trigger_if(abs(float(shifted.rms) - float(rms)) > rms_tol, "BP-PDB-023")
 
