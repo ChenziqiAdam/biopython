@@ -1088,9 +1088,16 @@ def check_qcp_translation_invariance(reference_coords, coords, rot, rms):
     # unrelated to the law under test.
     t = np.full(3, scale, dtype=float)
 
+    # Probe in the caller's floating dtype (never narrower-than-input, never truncating
+    # integers): QCP's float32 overflow (BP-PDB-020/022) would otherwise be double-counted
+    # here as translation dependence, because a float64 re-fit succeeds where float32 fails.
+    dt = np.result_type(reference_coords, coords)
+    if not np.issubdtype(dt, np.floating):
+        dt = np.float64
     shifted = QCPSuperimposer()
-    shifted.set(ref + t, mov + t)
-    shifted.run()
+    with np.errstate(all="ignore"):
+        shifted.set((ref + t).astype(dt), (mov + t).astype(dt))
+        shifted.run()
 
     rot_tol = 1e-6 * (1.0 + scale)
     rms_tol = 1e-6 * (scale + float(np.linalg.norm(t)))
